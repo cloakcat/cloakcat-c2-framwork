@@ -1,9 +1,11 @@
 //! CloakCat C2 server entry point.
 
 mod db;
+mod error;
 mod handlers;
 mod middleware;
 mod routes;
+mod service;
 mod state;
 mod validation;
 
