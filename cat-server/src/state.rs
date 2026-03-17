@@ -1,15 +1,31 @@
 //! Application state and view types.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::PgPool;
+use tokio::sync::{Mutex, Notify};
 
-/// Shared application state (DB pool).
+/// Shared application state (DB pool + command notification).
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
     pub shared_token: Vec<u8>,
     pub operator_token: String,
+    /// Per-agent notification: poll_command waits, push_command notifies.
+    pub cmd_notify: Arc<Mutex<HashMap<String, Arc<Notify>>>>,
+}
+
+impl AppState {
+    /// Get or create a Notify handle for an agent.
+    pub async fn get_notify(&self, agent_id: &str) -> Arc<Notify> {
+        let mut map = self.cmd_notify.lock().await;
+        map.entry(agent_id.to_string())
+            .or_insert_with(|| Arc::new(Notify::new()))
+            .clone()
+    }
 }
 
 /// Operator view of an agent.

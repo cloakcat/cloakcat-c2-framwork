@@ -3,7 +3,7 @@
 use base64::engine::general_purpose::STANDARD_NO_PAD as B64;
 use base64::Engine;
 use subtle::ConstantTimeEq;
-use tokio::time::{sleep, Duration, Instant};
+use tokio::time::{Duration, Instant};
 use uuid::Uuid;
 
 use cloakcat_protocol::{verify_result, Command, RegisterReq, ResultReq};
@@ -122,6 +122,9 @@ pub async fn push_command(
         eprintln!("[audit] failed to insert audit log: {}", e);
     }
 
+    // Wake up any poll_command waiting for this agent
+    state.get_notify(agent_id).await.notify_one();
+
     println!("Command queued for {}: {}", agent_id, command);
     Ok(())
 }
@@ -132,30 +135,53 @@ pub async fn poll_command(
     hold_secs: u64,
 ) -> Result<Option<Command>, ServerError> {
     let hold = hold_secs.min(120);
+
+    // First check: return immediately if a command is already queued
+    if let Some(cmd) = fetch_command(state, agent_id).await? {
+        return Ok(Some(cmd));
+    }
+    if hold == 0 {
+        return Ok(None);
+    }
+
+    // Long-hold: wait for notification or timeout
+    let notify = state.get_notify(agent_id).await;
     let deadline = Instant::now() + Duration::from_secs(hold);
 
     loop {
-        match db::get_oldest_command_for_agent(&state.db, agent_id).await {
-            Ok(Some(cmd_rec)) => {
-                let cmd = Command {
-                    cmd_id: cmd_rec.id.to_string(),
-                    command: cmd_rec.command,
-                };
-                println!(
-                    "[server] poll hit: agent={} -> dispatch cmd {}",
-                    agent_id, cmd.cmd_id
-                );
-                return Ok(Some(cmd));
-            }
-            Ok(None) => {}
-            Err(e) => return Err(e.into()),
-        }
-
-        if hold == 0 || Instant::now() >= deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
             return Ok(None);
         }
 
-        sleep(Duration::from_millis(300)).await;
+        // Wait for push_command to notify us, or timeout
+        let _ = tokio::time::timeout(remaining, notify.notified()).await;
+
+        // Check DB regardless (notification or timeout)
+        if let Some(cmd) = fetch_command(state, agent_id).await? {
+            return Ok(Some(cmd));
+        }
+    }
+}
+
+async fn fetch_command(
+    state: &AppState,
+    agent_id: &str,
+) -> Result<Option<Command>, ServerError> {
+    match db::get_oldest_command_for_agent(&state.db, agent_id).await {
+        Ok(Some(cmd_rec)) => {
+            let cmd = Command {
+                cmd_id: cmd_rec.id.to_string(),
+                command: cmd_rec.command,
+            };
+            println!(
+                "[server] poll hit: agent={} -> dispatch cmd {}",
+                agent_id, cmd.cmd_id
+            );
+            Ok(Some(cmd))
+        }
+        Ok(None) => Ok(None),
+        Err(e) => Err(e.into()),
     }
 }
 
