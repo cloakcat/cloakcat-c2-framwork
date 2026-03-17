@@ -1,0 +1,7 @@
+{
+  "alias": "awsjh01-beacon",
+  "c2_url": "http://127.0.0.1:3000",
+  "note": "AWSJH01 테스트 비컨",
+  "profile_name": "health_api",
+  "shared_token": "SUPER_SECRET_TOKEN_123"
+}

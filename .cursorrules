@@ -1,0 +1,88 @@
+project_rules:
+	•	id: cloakcat-project-overview
+patterns:
+	•	“**/*.rs”
+	•	“**/*.toml”
+languages:
+	•	rust
+rules:
+	•	
+
+This repository is “CloakCat C2”, a Rust-based Command and Control framework.
+It consists of three main components:
+	1.	cat-server: Axum + sqlx(PostgreSQL) based C2 HTTP API server.
+	2.	cat-agent: Rust beacon/agent that executes shell commands received from the server and uploads results.
+	3.	cat-cli: Operator CLI tool that lists agents, sends commands, and fetches results.
+	•	
+
+When modifying code, keep existing style and naming conventions.
+Prefer minimal, focused changes instead of large refactors.
+	•	
+
+Do not introduce new dependencies unless they are strictly necessary for the requested change.
+If a new dependency is required, explain why in a short comment in the code.
+	•	
+
+Prefer small, composable functions and clear data flow.
+Keep public APIs (function signatures, public structs) stable unless explicitly asked to change them.
+	•	
+
+Assume PostgreSQL is used via sqlx.
+When adding persistence, use sqlx query macros and existing database patterns in this repo.
+	•	id: cloakcat-security-opsec
+patterns:
+	•	“cat-server/**/*.rs”
+	•	“cat-agent/**/*.rs”
+languages:
+	•	rust
+rules:
+	•	
+
+This is a security/red team research project.
+Focus on robustness, clear error handling, and avoiding obvious security mistakes.
+	•	
+
+Keep secrets (keys, tokens) out of source code.
+Use environment variables or configuration files instead of hardcoding secrets.
+	•	
+
+When adding authentication/authorization, use JWT or HMAC-based schemes consistent with existing code.
+	•	id: cloakcat-scope-control
+patterns:
+	•	“**/*.rs”
+rules:
+	•	
+
+When the user asks for a change, only modify the minimum number of files needed.
+Do not rewrite or restructure unrelated parts of the project.
+	•	
+
+Prefer to extend existing patterns (structs, modules, error types) instead of inventing new ones without reason.
+	•	
+
+If a requested change seems too large, propose a small, incremental step and implement that step.
+
+- id: cat-server-specific
+patterns:
+	•	“cat-server/**/*.rs”
+rules:
+	•	
+
+For HTTP handlers, follow existing Axum patterns in this project.
+Use typed request/response structs and return proper status codes.
+	•	
+
+When adding database queries, use sqlx macros and existing PgPool pattern.
+Handle database errors gracefully and avoid panics.
+	•	id: cat-agent-specific
+patterns:
+	•	“cat-agent/**/*.rs”
+rules:
+	•	
+
+The agent must stay simple and stable.
+Avoid heavy dependencies and keep the runtime footprint small.
+	•	
+
+Do not introduce blocking I/O in async contexts.
+Use tokio async APIs consistently.

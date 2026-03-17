@@ -1,0 +1,12 @@
+//! CloakCat C2 protocol types, constants, and crypto.
+//! Shared by cat-server, cat-agent, and cat-cli.
+
+pub mod constants;
+pub mod crypto;
+pub mod paths;
+pub mod types;
+
+pub use constants::*;
+pub use crypto::{sign_result, verify_result};
+pub use paths::*;
+pub use types::*;

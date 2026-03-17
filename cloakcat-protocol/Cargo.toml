@@ -1,0 +1,10 @@
+[package]
+name = "cloakcat-protocol"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base64 = "0.22.1"
+ring = "0.17.14"
+serde = { version = "1.0", features = ["derive"] }
+subtle = "2.6"

@@ -1,0 +1,2 @@
+[workspace]
+members = ["cloakcat-protocol", "cat-server", "cat-agent", "cat-cli"]
