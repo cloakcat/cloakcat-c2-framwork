@@ -3,10 +3,12 @@
 
 pub mod constants;
 pub mod crypto;
+pub mod kdf;
 pub mod paths;
 pub mod types;
 
 pub use constants::*;
 pub use crypto::{sign_result, verify_result};
+pub use kdf::DerivedKeys;
 pub use paths::*;
 pub use types::*;

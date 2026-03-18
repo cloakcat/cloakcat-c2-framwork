@@ -185,7 +185,7 @@ pub async fn submit_result(
         &req.cmd_id,
         &req.stdout,
         &req.signature,
-        &state.shared_token,
+        &state.derived_keys.signing_key,
     ) {
         return Err(ServerError::Unauthorized);
     }
