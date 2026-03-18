@@ -433,6 +433,7 @@ dependencies = [
  "hkdf",
  "ring",
  "serde",
+ "serde_json",
  "sha2",
  "subtle",
 ]

@@ -5,11 +5,31 @@ use base64::Engine;
 use tokio::time::{Duration, Instant};
 use uuid::Uuid;
 
-use cloakcat_protocol::{verify_result, Command, RegisterReq, ResultReq};
+use cloakcat_protocol::{verify_result, AgentView, Command, RegisterReq, ResultReq, ResultView};
 
 use crate::db;
 use crate::error::ServerError;
-use crate::state::{AgentView, AppState, ResultView};
+use crate::state::AppState;
+
+fn agent_view_from(a: db::AgentRecord) -> AgentView {
+    AgentView {
+        agent_id: a.agent_id,
+        alias: a.alias,
+        platform: a.platform,
+        last_seen_at: a.last_seen_at.map(|dt| dt.to_rfc3339()),
+        note: a.note,
+        profile_name: a.profile_name,
+        beacon_min_ms: a.beacon_min_ms.map(|v| v as i64),
+        beacon_max_ms: a.beacon_max_ms.map(|v| v as i64),
+        backoff_max_ms: a.backoff_max_ms.map(|v| v as i64),
+        kill_after_hours: a.kill_after_hours.map(|v| v as i64),
+        hostname: a.hostname,
+        username: a.username,
+        os_version: a.os_version,
+        ip_addrs: a.ip_addrs,
+        tags: a.tags,
+    }
+}
 
 // ========== Agent operations ==========
 
@@ -63,12 +83,12 @@ pub async fn update_alias(
     note: Option<&str>,
 ) -> Result<AgentView, ServerError> {
     let record = db::update_agent_alias(&state.db, agent_id, alias, note).await?;
-    Ok(AgentView::from(record))
+    Ok(agent_view_from(record))
 }
 
 pub async fn list_agents(state: &AppState) -> Result<Vec<AgentView>, ServerError> {
     let records = db::list_agents(&state.db).await?;
-    Ok(records.into_iter().map(AgentView::from).collect())
+    Ok(records.into_iter().map(agent_view_from).collect())
 }
 
 pub async fn get_agent_tags(
@@ -237,7 +257,7 @@ pub async fn query_results(
         .map(|r| ResultView {
             agent_id: r.agent_id,
             cmd_id: r.command_id.to_string(),
-            exit_code: r.exit_code,
+            exit_code: r.exit_code as i64,
             stdout: r.stdout,
             stderr: r.stderr,
             ts_ms: r.created_at.timestamp_millis(),

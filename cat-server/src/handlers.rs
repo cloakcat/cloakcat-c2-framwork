@@ -112,7 +112,7 @@ pub async fn result_handler(
 
 pub async fn admin_agents(
     State(state): State<AppState>,
-) -> Result<Json<Vec<crate::state::AgentView>>, ServerError> {
+) -> Result<Json<Vec<cloakcat_protocol::AgentView>>, ServerError> {
     let agents = service::list_agents(&state).await?;
     Ok(Json(agents))
 }
@@ -135,7 +135,7 @@ pub async fn admin_update_agent_alias(
 pub async fn admin_results(
     State(state): State<AppState>,
     Query(q): Query<ListResults>,
-) -> Result<Json<Vec<crate::state::ResultView>>, ServerError> {
+) -> Result<Json<Vec<cloakcat_protocol::ResultView>>, ServerError> {
     let limit = q.limit.unwrap_or(20).min(200) as i64;
     let results = service::query_results(&state, q.agent_id.as_deref(), limit).await?;
     Ok(Json(results))

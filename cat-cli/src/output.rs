@@ -179,7 +179,9 @@ pub fn print_agents_with_tags(list: Vec<AgentInfo>) {
 pub fn print_history(s: &str) -> anyhow::Result<()> {
     let items: Vec<ResultItem> = serde_json::from_str(s)?;
     for item in items {
-        let ts = item.created_at.as_deref().unwrap_or("");
+        let ts = chrono::DateTime::from_timestamp_millis(item.ts_ms)
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_default();
         let stdout_first = item
             .stdout
             .lines()
