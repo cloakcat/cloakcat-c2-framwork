@@ -4,6 +4,7 @@ mod beacon;
 mod config;
 mod exec;
 mod host;
+mod transport;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
