@@ -15,6 +15,7 @@ mod build;
 mod listener;
 mod recon;
 mod task;
+mod transfer;
 
 pub enum Flow {
     Continue,
@@ -67,6 +68,9 @@ enum Cmd {
         /// Max results to show
         #[arg(long, default_value_t = 20)]
         limit: usize,
+        /// Show full stdout without truncating
+        #[arg(long)]
+        full: bool,
     },
 
     /// Follow recent results (Ctrl+C to stop)
@@ -96,6 +100,26 @@ enum Cmd {
         local_path: String,
         /// Remote destination path on target
         remote_path: String,
+    },
+
+    /// Upload file to agent via chunked transfer (up to 50 MB)
+    Upload {
+        /// Agent ID or alias
+        agent: String,
+        /// Local file to upload
+        local_path: String,
+        /// Remote destination path on target
+        remote_path: String,
+    },
+
+    /// Download file from agent via chunked transfer (up to 50 MB)
+    Download {
+        /// Agent ID or alias
+        agent: String,
+        /// Remote file path on target
+        remote_path: String,
+        /// Local destination path (defaults to filename)
+        local_path: Option<String>,
     },
 
     /// Low-noise Windows recon
@@ -259,6 +283,18 @@ pub fn dispatch(
             local_path,
             remote_path,
         } => recon::cmd_upload_small(&ctx, &agent, &local_path, &remote_path)?,
+
+        // --- chunked transfer ---
+        Cmd::Upload {
+            agent,
+            local_path,
+            remote_path,
+        } => transfer::cmd_upload(&ctx, &agent, &local_path, &remote_path)?,
+        Cmd::Download {
+            agent,
+            remote_path,
+            local_path,
+        } => transfer::cmd_download(&ctx, &agent, &remote_path, local_path.as_deref())?,
         Cmd::ReconLow { agent } => recon::cmd_recon_low(&ctx, &agent)?,
         Cmd::ReconNoisy { agent } => recon::cmd_recon_noisy(&ctx, &agent)?,
         Cmd::CleanupWindows { agent } => recon::cmd_cleanup_windows(&ctx, &agent)?,
@@ -266,7 +302,7 @@ pub fn dispatch(
         Cmd::Netinfo { agent } => recon::cmd_netinfo(&ctx, &agent)?,
 
         // --- task / results ---
-        Cmd::Results { agent, limit } => task::cmd_results(&ctx, &agent, limit)?,
+        Cmd::Results { agent, limit, full } => task::cmd_results(&ctx, &agent, limit, full)?,
         Cmd::History { agent, limit } => task::cmd_history(&ctx, &agent, limit)?,
         Cmd::Audit {
             limit,
