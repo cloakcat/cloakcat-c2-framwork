@@ -23,11 +23,52 @@ pub struct RegisterResp {
     pub token: String,
 }
 
+/// Task type discriminator for commands.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskType {
+    #[default]
+    Shell,
+    Upload,
+    Download,
+}
+
 /// Command dispatched to agent (server → agent).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Command {
     pub cmd_id: String,
+    /// Shell command text (Shell), or JSON-encoded task payload (Upload/Download).
     pub command: String,
+    #[serde(default)]
+    pub task_type: TaskType,
+}
+
+/// Upload task payload — JSON-encoded in Command.command for Upload tasks.
+/// Server has assembled the file; agent fetches it and writes to `path`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadTask {
+    pub transfer_id: String,
+    pub path: String,
+}
+
+/// Download task payload — JSON-encoded in Command.command for Download tasks.
+/// Agent reads `path` and sends chunks back to server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadTask {
+    pub transfer_id: String,
+    pub path: String,
+}
+
+/// A single chunk of a file transfer (used in both directions).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileChunk {
+    pub transfer_id: String,
+    /// 0-based chunk index.
+    pub seq: u32,
+    /// Total number of chunks.
+    pub total: u32,
+    /// Base64-encoded chunk bytes.
+    pub data: String,
 }
 
 /// Result upload request (agent → server).
