@@ -14,6 +14,7 @@ mod agent;
 mod build;
 mod listener;
 mod recon;
+mod socks;
 mod task;
 mod transfer;
 
@@ -230,6 +231,23 @@ enum Cmd {
         note: Option<String>,
     },
 
+    /// Start reverse SOCKS5 listener for an agent
+    SocksStart {
+        /// Agent ID or alias
+        agent: String,
+        /// Local port for the SOCKS5 listener on the C2 server
+        port: u16,
+    },
+
+    /// Stop reverse SOCKS5 listener for an agent
+    SocksStop {
+        /// Agent ID or alias
+        agent: String,
+    },
+
+    /// List active reverse SOCKS5 listeners
+    SocksList,
+
     /// Show available commands
     #[command(alias = "h")]
     Help,
@@ -322,6 +340,11 @@ pub fn dispatch(
             name,
             note,
         } => build::cmd_build_agent(os, alias, c2_url, profile, shared_token, output_dir, name, note)?,
+
+        // --- socks ---
+        Cmd::SocksStart { agent, port } => socks::cmd_socks_start(&ctx, &agent, port)?,
+        Cmd::SocksStop { agent } => socks::cmd_socks_stop(&ctx, &agent)?,
+        Cmd::SocksList => socks::cmd_socks_list(&ctx)?,
 
         // --- misc ---
         Cmd::Help => {
