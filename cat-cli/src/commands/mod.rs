@@ -11,6 +11,7 @@ use reqwest::blocking::Client;
 use crate::build::Os;
 
 mod agent;
+mod bof;
 mod build;
 mod listener;
 mod recon;
@@ -248,6 +249,17 @@ enum Cmd {
     /// List active reverse SOCKS5 listeners
     SocksList,
 
+    /// Execute a Beacon Object File (BOF) on an agent
+    Bof {
+        /// Agent ID or alias
+        agent: String,
+        /// Path to local .o file
+        bof_file: String,
+        /// Base64-encoded BOF arguments (optional)
+        #[arg(long)]
+        args: Option<String>,
+    },
+
     /// Show available commands
     #[command(alias = "h")]
     Help,
@@ -340,6 +352,9 @@ pub fn dispatch(
             name,
             note,
         } => build::cmd_build_agent(os, alias, c2_url, profile, shared_token, output_dir, name, note)?,
+
+        // --- bof ---
+        Cmd::Bof { agent, bof_file, args } => bof::cmd_bof(&ctx, &agent, &bof_file, args.as_deref())?,
 
         // --- socks ---
         Cmd::SocksStart { agent, port } => socks::cmd_socks_start(&ctx, &agent, port)?,
