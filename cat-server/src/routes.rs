@@ -1,7 +1,10 @@
 //! Router and route registration.
 
-use axum::{routing::{get, post}, Router};
-use cloakcat_protocol::{DefaultProfile, HealthProfile, ListenerProfile};
+use axum::{
+    routing::{delete, get, post},
+    Router,
+};
+use cloakcat_protocol::{DefaultProfile, HealthProfile, ListenerProfile, HEALTH_BASE_PATH};
 
 use crate::handlers;
 use crate::state::AppState;
@@ -20,21 +23,27 @@ fn agent_routes_for(profile: &dyn ListenerProfile) -> Router<AppState> {
 
 pub fn build_router(state: AppState) -> Router {
     // Clone Arc before moving state into with_state().
-    let malleable = state.malleable_profile.clone();
+    let profiles = state.profiles.clone();
 
-    // Agent routes — require X-Agent-Token via agent_auth middleware
+    // Agent routes — require X-Agent-Token via agent_auth middleware.
+    // Start with built-in profiles and deduplicate by base_path.
+    let mut registered_paths: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    registered_paths.insert("".to_string()); // DefaultProfile
+    registered_paths.insert(HEALTH_BASE_PATH.to_string()); // HealthProfile
+
     let mut agent_routes = agent_routes_for(&DefaultProfile)
         .merge(agent_routes_for(&HealthProfile));
 
-    // Register routes for the active malleable profile (if any and not duplicate base_path).
-    if let Some(ref mp) = malleable {
-        let base = mp.base_path();
-        if !base.is_empty()
-            && base != cloakcat_protocol::HEALTH_BASE_PATH
-        {
-            agent_routes = agent_routes.merge(agent_routes_for(mp.as_ref()));
+    // Register routes for all loaded malleable profiles.
+    for profile in profiles.values() {
+        let base = profile.base_path().to_string();
+        if !registered_paths.contains(&base) {
+            registered_paths.insert(base);
+            agent_routes = agent_routes.merge(agent_routes_for(profile.as_ref()));
         }
     }
+
     let agent_routes = agent_routes
         // Transfer: agent fetches upload file / sends download chunks
         .route("/transfer/upload-file/{transfer_id}", get(handlers::get_upload_file_handler))
@@ -47,7 +56,7 @@ pub fn build_router(state: AppState) -> Router {
             crate::middleware::agent_auth,
         ));
 
-    // Operator routes — require X-Operator-Token via operator_auth middleware
+    // Operator routes — require X-Operator-Token via operator_auth middleware.
     let protected_routes = Router::new()
         .route("/command/{agent_id}", post(handlers::push_command_handler))
         .route("/admin/agents", get(handlers::admin_agents))
@@ -66,17 +75,21 @@ pub fn build_router(state: AppState) -> Router {
         .route("/admin/socks/start", post(handlers::socks_start_handler))
         .route("/admin/socks/stop", post(handlers::socks_stop_handler))
         .route("/admin/socks/list", get(handlers::socks_list_handler))
+        // Dynamic listener management
+        .route("/admin/listeners", get(handlers::admin_listeners_list))
+        .route("/admin/listeners", post(handlers::admin_listeners_add))
+        .route("/admin/listeners/{name}", delete(handlers::admin_listeners_remove))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::middleware::operator_auth,
         ));
 
-    // Nest everything under /v1
+    // Nest everything under /v1.
     let versioned = Router::new()
         .merge(agent_routes)
         .merge(protected_routes);
 
-    // Public (unauthenticated) routes — outside version prefix
+    // Public (unauthenticated) routes — outside version prefix.
     let public_routes = Router::new()
         .route("/ping", get(handlers::ping_handler));
 

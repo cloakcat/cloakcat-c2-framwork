@@ -3,10 +3,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use cloakcat_protocol::{DerivedKeys, MalleableProfile};
+use cloakcat_protocol::{DerivedKeys, ListenerProfile as _, MalleableProfile};
 use sqlx::PgPool;
 use tokio::sync::{Mutex, Notify};
 
+use crate::listener_mgr::ListenerManager;
+use crate::routes::API_VERSION;
 use crate::tunnel::TunnelManager;
 
 /// In-memory buffer for a chunked upload (CLI → server → agent).
@@ -37,10 +39,12 @@ pub struct AppState {
     pub download_buffers: Arc<Mutex<HashMap<String, DownloadBuffer>>>,
     /// Reverse SOCKS5 tunnel manager.
     pub tunnel_mgr: Arc<Mutex<TunnelManager>>,
-    /// Active malleable C2 profile (loaded from MALLEABLE_PROFILE_PATH at startup).
-    /// When set, request bodies are decoded and poll responses are encoded
-    /// according to the profile's transform chain.
+    /// Primary malleable profile (backward compat — loaded via MALLEABLE_PROFILE_PATH).
     pub malleable_profile: Option<Arc<MalleableProfile>>,
+    /// All loaded malleable profiles by name (superset of malleable_profile).
+    pub profiles: Arc<HashMap<String, Arc<MalleableProfile>>>,
+    /// Dynamic listener manager.
+    pub listener_mgr: Arc<Mutex<ListenerManager>>,
 }
 
 impl AppState {
@@ -50,5 +54,27 @@ impl AppState {
         map.entry(agent_id.to_string())
             .or_insert_with(|| Arc::new(Notify::new()))
             .clone()
+    }
+
+    /// Look up the `MalleableProfile` for the given request URI.
+    ///
+    /// Strips the `/v1` API prefix, then finds the profile whose `base_path()`
+    /// is the longest prefix match.  Falls back to `malleable_profile` for
+    /// default/unmatched paths, then returns `None` if nothing is loaded.
+    pub fn profile_for_uri(&self, uri: &str) -> Option<&Arc<MalleableProfile>> {
+        let path = uri.strip_prefix(API_VERSION).unwrap_or(uri);
+
+        let mut best: Option<&Arc<MalleableProfile>> = None;
+        let mut best_len = 0usize;
+
+        for profile in self.profiles.values() {
+            let base = profile.base_path();
+            if !base.is_empty() && path.starts_with(base) && base.len() > best_len {
+                best = Some(profile);
+                best_len = base.len();
+            }
+        }
+
+        best.or(self.malleable_profile.as_ref())
     }
 }

