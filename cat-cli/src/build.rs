@@ -74,6 +74,41 @@ pub struct BuildAgentArgs {
     pub encrypt: bool,
 }
 
+/// Encrypt `data` with AES-256-GCM.
+///
+/// Output format: `[12-byte nonce][ciphertext + 16-byte tag]`
+///
+/// Compatible with shellcode_loader's `-e aes -k <hex_key>` option.
+/// Returns `(ciphertext_blob, key_as_64_hex_chars)`.
+// aes-gcm 0.10 uses generic-array 0.14 whose from_slice is deprecated in 1.x.
+// The warning is internal to the crate version chosen; suppress it here.
+#[allow(deprecated)]
+fn encrypt_aes_gcm(data: &[u8]) -> Result<(Vec<u8>, String)> {
+    use aes_gcm::aead::Aead;
+    use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
+    use rand::RngCore;
+
+    let mut key_bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut key_bytes);
+
+    let mut nonce_bytes = [0u8; 12];
+    rand::rng().fill_bytes(&mut nonce_bytes);
+
+    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let cipher = Aes256Gcm::new(key);
+
+    let ciphertext = cipher
+        .encrypt(nonce, data)
+        .map_err(|e| anyhow!("AES-256-GCM encrypt failed: {e}"))?;
+
+    let mut blob = Vec::with_capacity(12 + ciphertext.len());
+    blob.extend_from_slice(&nonce_bytes);
+    blob.extend_from_slice(&ciphertext);
+
+    Ok((blob, hex::encode(key_bytes)))
+}
+
 fn workspace_root() -> PathBuf {
     let cli_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     cli_dir
