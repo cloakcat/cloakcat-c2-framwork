@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 cloakcat-protocol = { path = "../cloakcat-protocol" }
+cat-agent = { path = "../cat-agent" }
 anyhow = "1"
 dotenvy = "0.15"
 clap = { version = "4", features = ["derive"] }

