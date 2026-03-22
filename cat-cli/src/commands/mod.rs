@@ -8,7 +8,7 @@ use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use reqwest::blocking::Client;
 
-use crate::build::Os;
+use crate::build::{Format, Os};
 
 mod agent;
 mod bof;
@@ -209,6 +209,9 @@ enum Cmd {
         /// Target OS (linux | windows)
         #[arg(long)]
         os: Os,
+        /// Output format: exe (default) | dll | shellcode
+        #[arg(long, default_value = "exe")]
+        format: Format,
         /// Agent alias
         #[arg(long)]
         alias: String,
@@ -372,6 +375,7 @@ pub fn dispatch(
         // --- build ---
         Cmd::BuildAgent {
             os,
+            format,
             alias,
             c2_url,
             profile,
@@ -379,7 +383,7 @@ pub fn dispatch(
             output_dir,
             name,
             note,
-        } => build::cmd_build_agent(os, alias, c2_url, profile, shared_token, output_dir, name, note)?,
+        } => build::cmd_build_agent(os, format, alias, c2_url, profile, shared_token, output_dir, name, note)?,
 
         // --- bof ---
         Cmd::Bof { agent, bof_file, args } => bof::cmd_bof(&ctx, &agent, &bof_file, args.as_deref())?,

@@ -4,10 +4,11 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::build::{build_agent, BuildAgentArgs, Os};
+use crate::build::{build_agent, BuildAgentArgs, Format, Os};
 
 pub fn cmd_build_agent(
     os: Os,
+    format: Format,
     alias: String,
     c2_url: String,
     profile: String,
@@ -18,6 +19,7 @@ pub fn cmd_build_agent(
 ) -> Result<()> {
     let args = BuildAgentArgs {
         os,
+        format,
         alias,
         c2_url,
         profile,

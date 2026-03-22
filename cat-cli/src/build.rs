@@ -1,4 +1,4 @@
-//! Agent binary build (embed config, cargo build, copy output).
+//! Agent binary / DLL build (embed config, cargo build, copy output).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,9 +33,36 @@ impl FromStr for Os {
     }
 }
 
+/// Output format for the built agent.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum Format {
+    /// Native executable (default)
+    #[default]
+    Exe,
+    /// Reflective DLL (`cdylib`)
+    Dll,
+    /// Position-independent shellcode via sRDI (Phase 8-3)
+    Shellcode,
+}
+
+impl FromStr for Format {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "exe" => Ok(Format::Exe),
+            "dll" => Ok(Format::Dll),
+            "shellcode" => Ok(Format::Shellcode),
+            other => Err(format!(
+                "unsupported format: {other} (use: exe | dll | shellcode)"
+            )),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct BuildAgentArgs {
     pub os: Os,
+    pub format: Format,
     pub alias: String,
     pub c2_url: String,
     pub profile: String,
@@ -54,6 +81,13 @@ fn workspace_root() -> PathBuf {
 }
 
 pub fn build_agent(args: BuildAgentArgs) -> Result<()> {
+    // DLL / shellcode only make sense for Windows.
+    if matches!(args.format, Format::Dll | Format::Shellcode) {
+        if !matches!(args.os, Os::Windows) {
+            return Err(anyhow!("dll/shellcode format requires --os windows"));
+        }
+    }
+
     let root = workspace_root();
 
     let cfg = AgentBuildConfig {
@@ -65,6 +99,28 @@ pub fn build_agent(args: BuildAgentArgs) -> Result<()> {
     };
     let cfg_json = serde_json::to_string(&cfg)?;
 
+    println!(
+        "[build-agent] starting cargo build for cat-agent (os={:?}, format={:?}, alias={})...",
+        args.os, args.format, args.alias
+    );
+
+    match args.format {
+        Format::Exe => build_exe(&root, &args, &cfg_json),
+        Format::Dll => build_dll(&root, &args, &cfg_json),
+        Format::Shellcode => {
+            // Phase 8-3: build DLL first, then convert via sRDI.
+            build_dll(&root, &args, &cfg_json)?;
+            println!(
+                "[build-agent] NOTE: shellcode (sRDI) conversion not yet implemented — \
+                 the .dll has been placed in the output directory. \
+                 sRDI conversion will be added in Phase 8-3."
+            );
+            Ok(())
+        }
+    }
+}
+
+fn build_exe(root: &Path, args: &BuildAgentArgs, cfg_json: &str) -> Result<()> {
     let (target_arg, bin_path): (Option<&str>, PathBuf) = match args.os {
         Os::Linux => (None, root.join("target").join("release").join("cat-agent")),
         Os::Windows => (
@@ -76,14 +132,9 @@ pub fn build_agent(args: BuildAgentArgs) -> Result<()> {
         ),
     };
 
-    println!(
-        "[build-agent] starting cargo build for cat-agent (os={:?}, alias={})...",
-        args.os, args.alias
-    );
-
     let mut cmd = std::process::Command::new("cargo");
-    cmd.current_dir(&root)
-        .env("CLOAKCAT_EMBED_CONFIG", &cfg_json)
+    cmd.current_dir(root)
+        .env("CLOAKCAT_EMBED_CONFIG", cfg_json)
         .arg("build")
         .arg("-p")
         .arg("cat-agent")
@@ -97,29 +148,56 @@ pub fn build_agent(args: BuildAgentArgs) -> Result<()> {
     }
     let status = cmd.status()?;
     if !status.success() {
-        eprintln!("[build-agent] cargo build failed with status: {}", status);
         return Err(anyhow!("cargo build failed"));
     }
 
-    println!("[build-agent] cargo build finished, locating binary...");
+    copy_output(&bin_path, args, ".exe")
+}
+
+fn build_dll(root: &Path, args: &BuildAgentArgs, cfg_json: &str) -> Result<()> {
+    // DLL is always Windows cross-compiled.
+    let bin_path = root
+        .join("target")
+        .join("x86_64-pc-windows-gnu")
+        .join("release")
+        .join("cat_agent.dll");
+
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.current_dir(root)
+        .env("CLOAKCAT_EMBED_CONFIG", cfg_json)
+        .arg("build")
+        .arg("-p")
+        .arg("cat-agent")
+        .arg("--lib")
+        .arg("--release")
+        .arg("--target")
+        .arg("x86_64-pc-windows-gnu")
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit());
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(anyhow!("cargo build --lib failed"));
+    }
+
+    copy_output(&bin_path, args, ".dll")
+}
+
+fn copy_output(bin_path: &Path, args: &BuildAgentArgs, ext: &str) -> Result<()> {
+    println!("[build-agent] cargo build finished, locating output...");
     if !bin_path.exists() {
-        eprintln!(
-            "[build-agent] built binary not found at {}",
-            bin_path.display()
-        );
         return Err(anyhow!(
-            "built binary not found (check target toolchain and build output)"
+            "built artifact not found at {} (check target toolchain)",
+            bin_path.display()
         ));
     }
 
     fs::create_dir_all(&args.output_dir)?;
     let mut dest = args.output_dir.join(&args.name);
-    if matches!(args.os, Os::Windows)
-        && !dest.to_string_lossy().to_lowercase().ends_with(".exe")
-    {
-        dest.set_extension("exe");
+    let lower = dest.to_string_lossy().to_lowercase();
+    if !lower.ends_with(ext) {
+        dest.set_extension(&ext[1..]); // strip leading '.'
     }
-    fs::copy(&bin_path, &dest)?;
-    println!("[build-agent] done. saved agent binary to {}", dest.display());
+    fs::copy(bin_path, &dest)?;
+    println!("[build-agent] done. saved to {}", dest.display());
     Ok(())
 }
