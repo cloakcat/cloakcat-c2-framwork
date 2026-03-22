@@ -70,6 +70,8 @@ pub struct BuildAgentArgs {
     pub output_dir: PathBuf,
     pub name: String,
     pub note: Option<String>,
+    /// Encrypt shellcode output with AES-256-GCM (shellcode format only).
+    pub encrypt: bool,
 }
 
 fn workspace_root() -> PathBuf {

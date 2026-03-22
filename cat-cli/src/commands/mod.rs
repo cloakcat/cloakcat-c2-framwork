@@ -233,6 +233,9 @@ enum Cmd {
         /// Optional note
         #[arg(long)]
         note: Option<String>,
+        /// Encrypt shellcode with AES-256-GCM (shellcode format only)
+        #[arg(long)]
+        encrypt: bool,
     },
 
     /// Start reverse SOCKS5 listener for an agent
@@ -383,7 +386,8 @@ pub fn dispatch(
             output_dir,
             name,
             note,
-        } => build::cmd_build_agent(os, format, alias, c2_url, profile, shared_token, output_dir, name, note)?,
+            encrypt,
+        } => build::cmd_build_agent(os, format, alias, c2_url, profile, shared_token, output_dir, name, note, encrypt)?,
 
         // --- bof ---
         Cmd::Bof { agent, bof_file, args } => bof::cmd_bof(&ctx, &agent, &bof_file, args.as_deref())?,

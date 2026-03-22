@@ -6,6 +6,7 @@ use anyhow::Result;
 
 use crate::build::{build_agent, BuildAgentArgs, Format, Os};
 
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_build_agent(
     os: Os,
     format: Format,
@@ -16,6 +17,7 @@ pub fn cmd_build_agent(
     output_dir: PathBuf,
     name: String,
     note: Option<String>,
+    encrypt: bool,
 ) -> Result<()> {
     let args = BuildAgentArgs {
         os,
@@ -27,6 +29,7 @@ pub fn cmd_build_agent(
         output_dir,
         name,
         note,
+        encrypt,
     };
     build_agent(args)
 }
