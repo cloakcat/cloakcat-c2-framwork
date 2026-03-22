@@ -3,6 +3,14 @@ name = "cat-agent"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "cat_agent"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "cat-agent"
+path = "src/main.rs"
+
 [dependencies]
 cloakcat-protocol = { path = "../cloakcat-protocol" }
 anyhow = "1.0.100"
