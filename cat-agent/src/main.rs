@@ -1,15 +1,6 @@
-//! CloakCat agent entry point.
-
-mod beacon;
-mod bof;
-mod config;
-mod exec;
-mod host;
-mod tasks;
-mod transport;
-mod tunnel;
+//! CloakCat agent binary entry point — thin wrapper around the library.
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    beacon::run().await
+    cat_agent::beacon_main().await
 }
