@@ -13,6 +13,7 @@ use crate::build::{Format, Os};
 mod agent;
 mod bof;
 mod build;
+mod inject;
 mod listener;
 mod recon;
 mod socks;
@@ -266,6 +267,37 @@ enum Cmd {
         args: Option<String>,
     },
 
+    /// Inject shellcode into a running process by PID
+    Inject {
+        /// Agent ID or alias
+        agent: String,
+        /// Target process ID
+        pid: u32,
+        /// Local path to raw shellcode file
+        shellcode_path: String,
+    },
+
+    /// Inject shellcode from a file on the agent's filesystem
+    Shinject {
+        /// Agent ID or alias
+        agent: String,
+        /// Target process ID
+        pid: u32,
+        /// Shellcode file path on the agent's filesystem
+        remote_path: String,
+    },
+
+    /// Spawn a suspended process and inject shellcode
+    SpawnInject {
+        /// Agent ID or alias
+        agent: String,
+        /// Local path to raw shellcode file
+        shellcode_path: String,
+        /// Override spawnto executable (default: agent config or svchost.exe)
+        #[arg(long)]
+        spawn_exe: Option<String>,
+    },
+
     /// List active C2 listeners
     ListenersList,
 
@@ -391,6 +423,17 @@ pub fn dispatch(
 
         // --- bof ---
         Cmd::Bof { agent, bof_file, args } => bof::cmd_bof(&ctx, &agent, &bof_file, args.as_deref())?,
+
+        // --- inject ---
+        Cmd::Inject { agent, pid, shellcode_path } => {
+            inject::cmd_inject(&ctx, &agent, pid, &shellcode_path)?
+        }
+        Cmd::Shinject { agent, pid, remote_path } => {
+            inject::cmd_shinject(&ctx, &agent, pid, &remote_path)?
+        }
+        Cmd::SpawnInject { agent, shellcode_path, spawn_exe } => {
+            inject::cmd_spawn_inject(&ctx, &agent, &shellcode_path, spawn_exe.as_deref())?
+        }
 
         // --- socks ---
         Cmd::SocksStart { agent, port } => socks::cmd_socks_start(&ctx, &agent, port)?,
