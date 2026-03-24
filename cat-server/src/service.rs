@@ -49,14 +49,10 @@ pub async fn register_agent(
     state: &AppState,
     payload: &RegisterReq,
 ) -> Result<serde_json::Value, ServerError> {
-    // token_b64 is a legacy field kept for DB compatibility
-    let token_b64 = B64.encode(Uuid::new_v4().as_bytes());
-
     db::upsert_agent(
         &state.db,
         &payload.agent_id,
         &payload.platform,
-        &token_b64,
         payload.alias.as_deref(),
         payload.note.as_deref(),
         payload.hostname.as_deref(),
@@ -75,7 +71,6 @@ pub async fn register_agent(
     Ok(serde_json::json!({
         "status": "ok",
         "message": format!("Welcome, agent {}", payload.agent_id),
-        "token": token_b64,
     }))
 }
 
@@ -434,7 +429,6 @@ pub async fn submit_result(
         &state.db,
         &agent.agent_id,
         &agent.platform,
-        &agent.token_b64,
         agent.alias.as_deref(),
         agent.note.as_deref(),
         agent.hostname.as_deref(),

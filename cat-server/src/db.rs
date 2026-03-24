@@ -9,8 +9,6 @@ pub struct AgentRecord {
     pub id: Uuid,
     pub agent_id: String,
     pub platform: String,
-    /// legacy: was used for per-agent HMAC key in v1; now unused, kept for schema compat
-    pub token_b64: String,
     pub alias: Option<String>,
     pub note: Option<String>,
     pub profile_name: Option<String>,
@@ -62,7 +60,6 @@ pub async fn upsert_agent(
     pool: &PgPool,
     agent_id: &str,
     platform: &str,
-    token_b64: &str,
     alias: Option<&str>,
     note: Option<&str>,
     hostname: Option<&str>,
@@ -74,25 +71,23 @@ pub async fn upsert_agent(
     let record = sqlx::query_as!(
         AgentRecord,
         r#"
-        INSERT INTO agents (agent_id, platform, token_b64, alias, note, hostname, username, os_version, ip_addrs, tags, last_seen_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, '{}'::text[]), now())
+        INSERT INTO agents (agent_id, platform, alias, note, hostname, username, os_version, ip_addrs, tags, last_seen_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, '{}'::text[]), now())
         ON CONFLICT (agent_id)
         DO UPDATE
         SET platform = EXCLUDED.platform,
-            token_b64 = EXCLUDED.token_b64,
             alias = COALESCE(agents.alias, EXCLUDED.alias),
             note = COALESCE(agents.note, EXCLUDED.note),
             hostname = COALESCE(EXCLUDED.hostname, agents.hostname),
             username = COALESCE(EXCLUDED.username, agents.username),
             os_version = COALESCE(EXCLUDED.os_version, agents.os_version),
             ip_addrs = COALESCE(EXCLUDED.ip_addrs, agents.ip_addrs),
-            tags = COALESCE($10, agents.tags),
+            tags = COALESCE($9, agents.tags),
             last_seen_at = now()
         RETURNING
             id,
             agent_id,
             platform,
-            token_b64,
             alias,
             note,
             profile_name,
@@ -110,7 +105,6 @@ pub async fn upsert_agent(
         "#,
         agent_id,
         platform,
-        token_b64,
         alias,
         note,
         hostname,
@@ -136,7 +130,6 @@ pub async fn get_agent_by_id(
             id,
             agent_id,
             platform,
-            token_b64,
             alias,
             note,
             profile_name,
@@ -263,7 +256,6 @@ pub async fn list_agents(pool: &PgPool) -> Result<Vec<AgentRecord>, anyhow::Erro
             id,
             agent_id,
             platform,
-            token_b64,
             alias,
             note,
             profile_name,
@@ -303,7 +295,6 @@ pub async fn update_agent_tags(
             id,
             agent_id,
             platform,
-            token_b64,
             alias,
             note,
             profile_name,
@@ -486,7 +477,6 @@ pub async fn update_agent_alias(
             id,
             agent_id,
             platform,
-            token_b64,
             alias,
             note,
             profile_name,
