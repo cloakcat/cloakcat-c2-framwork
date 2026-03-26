@@ -7,12 +7,14 @@
 mod beacon;
 mod bof;
 mod config;
+mod evasion;
 mod exec;
 mod host;
 pub mod srdi;
 mod tasks;
 mod transport;
 mod tunnel;
+pub mod utils;
 
 /// Async beacon main loop.  Called by `main()` and `DllMain`.
 pub async fn beacon_main() -> anyhow::Result<()> {
