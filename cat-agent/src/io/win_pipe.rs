@@ -4,9 +4,12 @@
 
 use anyhow::{bail, Result};
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE},
+    Foundation::{
+        CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE, ERROR_PIPE_CONNECTED,
+    },
     System::Pipes::{
-        CreateNamedPipeW, PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe,
+        PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT,
     },
 };
 
@@ -38,6 +41,29 @@ pub fn create_pipe_server(name: &str) -> Result<HANDLE> {
     }
 
     Ok(h)
+}
+
+/// Block until a client connects to the named pipe.
+///
+/// Handles `ERROR_PIPE_CONNECTED` (client already connected before the call)
+/// as a successful connection.
+pub fn accept_connection(h: HANDLE) -> Result<()> {
+    let ok = unsafe { ConnectNamedPipe(h, std::ptr::null_mut()) };
+    if ok == 0 {
+        let err = unsafe { GetLastError() };
+        if err == ERROR_PIPE_CONNECTED {
+            return Ok(());
+        }
+        bail!("ConnectNamedPipe failed: error {err}");
+    }
+    Ok(())
+}
+
+/// Disconnect the server side of a named pipe, allowing re-use or cleanup.
+pub fn disconnect(h: HANDLE) {
+    unsafe {
+        DisconnectNamedPipe(h);
+    }
 }
 
 /// Close a Windows HANDLE.
