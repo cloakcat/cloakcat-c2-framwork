@@ -101,7 +101,7 @@ impl PipeTransport {
                         format!("{}/transfer/upload-file/{}", url, file_id)
                     };
                     let data = upstream.fetch_upload_file(&fetch_url, token).await?;
-                    Envelope::V1FetchUploadResp(data)
+                    Envelope::V1FetchUploadResp { data }
                 }
                 Envelope::V1DownloadChunk(chunk) => {
                     upstream.send_download_chunk(url, token, &chunk).await?;
@@ -188,7 +188,7 @@ impl Transport for PipeTransport {
         let resp_envelope: Envelope = serde_json::from_slice(&resp_bytes)?;
 
         match resp_envelope {
-            Envelope::V1FetchUploadResp(data) => Ok(data),
+            Envelope::V1FetchUploadResp { data } => Ok(data),
             other => bail!("expected V1FetchUploadResp, got {:?}", other),
         }
     }
