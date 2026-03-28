@@ -14,4 +14,6 @@ pub enum Envelope {
     V1PollResp(Option<Command>),
     V1Result(ResultReq),
     V1Ack,
+    V1FetchUpload { agent_id: String, file_id: String },
+    V1FetchUploadResp(Vec<u8>),
 }
