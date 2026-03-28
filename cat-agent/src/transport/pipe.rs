@@ -97,8 +97,20 @@ impl Transport for PipeTransport {
         }
     }
 
-    async fn send_result(&self, _url: &str, _token: &str, _req: &ResultReq) -> Result<()> {
-        todo!()
+    async fn send_result(&self, _url: &str, _token: &str, req: &ResultReq) -> Result<()> {
+        let pipe = self.handle.as_ref().expect("init() must be called before send_result()");
+
+        let envelope = Envelope::V1Result(req.clone());
+        let payload = serde_json::to_vec(&envelope)?;
+        pipe.send(&payload)?;
+
+        let resp_bytes = pipe.recv()?;
+        let resp_envelope: Envelope = serde_json::from_slice(&resp_bytes)?;
+
+        match resp_envelope {
+            Envelope::V1Ack => Ok(()),
+            other => bail!("expected V1Ack, got {:?}", other),
+        }
     }
 
     async fn fetch_upload_file(&self, _url: &str, _token: &str) -> Result<Vec<u8>> {
