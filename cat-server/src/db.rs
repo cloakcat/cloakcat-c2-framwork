@@ -56,6 +56,7 @@ pub struct AuditRecord {
     pub context: serde_json::Value,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn upsert_agent(
     pool: &PgPool,
     agent_id: &str,

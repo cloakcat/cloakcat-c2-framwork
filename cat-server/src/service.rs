@@ -327,7 +327,7 @@ pub async fn socks_start(
         state.cmd_notify.clone(),
     )
     .await
-    .map_err(|e| ServerError::Internal(e))?;
+    .map_err(ServerError::Internal)?;
 
     println!("[socks] started: agent={} port={}", agent_id, port);
     Ok(())
@@ -358,16 +358,15 @@ pub async fn socks_list(state: &AppState) -> Result<Vec<SocksListenerView>, Serv
 
 fn decode_command(cmd_rec: crate::db::CommandRecord) -> Command {
     // Try to decode structured task envelope: {"__tt": ..., "__cmd": ...}
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&cmd_rec.command) {
-        if let (Some(tt_val), Some(cmd_str)) = (v.get("__tt"), v.get("__cmd").and_then(|c| c.as_str())) {
-            if let Ok(task_type) = serde_json::from_value::<TaskType>(tt_val.clone()) {
-                return Command {
-                    cmd_id: cmd_rec.id.to_string(),
-                    command: cmd_str.to_string(),
-                    task_type,
-                };
-            }
-        }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&cmd_rec.command)
+        && let (Some(tt_val), Some(cmd_str)) = (v.get("__tt"), v.get("__cmd").and_then(|c| c.as_str()))
+        && let Ok(task_type) = serde_json::from_value::<TaskType>(tt_val.clone())
+    {
+        return Command {
+            cmd_id: cmd_rec.id.to_string(),
+            command: cmd_str.to_string(),
+            task_type,
+        };
     }
     Command {
         cmd_id: cmd_rec.id.to_string(),

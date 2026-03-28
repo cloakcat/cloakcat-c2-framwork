@@ -434,14 +434,14 @@ pub async fn admin_listeners_add(
             let tls_config =
                 crate::tls::ensure_rustls_config(&cert_path, &key_path, cert_cfg, &entry.profile)
                     .await
-                    .map_err(|e| ServerError::Internal(e))?;
+                    .map_err(ServerError::Internal)?;
             crate::listener_mgr::spawn_https(&entry, app, tls_config)
                 .await
-                .map_err(|e| ServerError::Internal(e))?
+                .map_err(ServerError::Internal)?
         }
         _ => crate::listener_mgr::spawn_http(&entry, app)
             .await
-            .map_err(|e| ServerError::Internal(e))?,
+            .map_err(ServerError::Internal)?,
     };
 
     state.listener_mgr.lock().await.insert(entry, cancel);

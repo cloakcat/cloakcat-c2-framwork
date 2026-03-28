@@ -167,7 +167,7 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
                     listener_mgr::spawn_https(entry, listener_app, tls_config).await?
                 }
-                "http" | _ => listener_mgr::spawn_http(entry, listener_app).await?,
+                _ => listener_mgr::spawn_http(entry, listener_app).await?,
             };
             state.listener_mgr.lock().await.insert(entry.clone(), cancel);
         }
@@ -207,7 +207,9 @@ async fn main() -> anyhow::Result<()> {
                 .serve(app.into_make_service())
                 .await?;
         } else {
-            let addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+            let addr: SocketAddr = std::env::var("LISTEN_ADDR")
+                .unwrap_or_else(|_| "0.0.0.0:3000".to_string())
+                .parse()?;
             eprintln!(
                 "[startup] WARNING: Running in HTTP mode. \
                  Set TLS_CERT_PATH and TLS_KEY_PATH, or configure [https_certificate] in profile."
