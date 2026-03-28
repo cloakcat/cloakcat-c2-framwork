@@ -6,9 +6,14 @@ use anyhow::{bail, Result};
 use windows_sys::Win32::{
     Foundation::{
         CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE, ERROR_PIPE_CONNECTED,
+        ERROR_PIPE_BUSY,
+    },
+    Storage::FileSystem::{
+        CreateFileW, GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING,
     },
     System::Pipes::{
-        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe,
+        ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, SetNamedPipeHandleState,
+        WaitNamedPipeW,
         PIPE_ACCESS_DUPLEX, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_WAIT,
     },
 };
@@ -64,6 +69,74 @@ pub fn disconnect(h: HANDLE) {
     unsafe {
         DisconnectNamedPipe(h);
     }
+}
+
+/// Connect to an existing named pipe as a client.
+///
+/// Opens the pipe with `GENERIC_READ | GENERIC_WRITE` and switches to message-read mode.
+///
+/// # Safety
+/// The returned HANDLE must be closed via [`close_handle`] when no longer needed.
+pub fn connect_pipe_client(name: &str) -> Result<HANDLE> {
+    let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let h = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            0,
+            0,
+        )
+    };
+
+    if h == INVALID_HANDLE_VALUE {
+        let err = unsafe { GetLastError() };
+        bail!("CreateFileW failed for pipe \"{name}\": error {err}");
+    }
+
+    let mut mode = PIPE_READMODE_MESSAGE;
+    let ok = unsafe {
+        SetNamedPipeHandleState(h, &mut mode, std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    if ok == 0 {
+        let err = unsafe { GetLastError() };
+        unsafe { CloseHandle(h) };
+        bail!("SetNamedPipeHandleState failed: error {err}");
+    }
+
+    Ok(h)
+}
+
+/// Connect to a named pipe with retry logic for busy pipes.
+///
+/// On `ERROR_PIPE_BUSY`, waits up to `timeout_ms` milliseconds for the pipe to become
+/// available, then retries. Gives up after `max_retries` attempts.
+pub fn connect_pipe_client_retry(name: &str, max_retries: u32, timeout_ms: u32) -> Result<HANDLE> {
+    let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+
+    for attempt in 0..=max_retries {
+        match connect_pipe_client(name) {
+            Ok(h) => return Ok(h),
+            Err(e) => {
+                let err = unsafe { GetLastError() };
+                if err != ERROR_PIPE_BUSY || attempt == max_retries {
+                    bail!(
+                        "connect_pipe_client_retry failed after {} attempts: {e}",
+                        attempt + 1
+                    );
+                }
+                let ok = unsafe { WaitNamedPipeW(wide.as_ptr(), timeout_ms) };
+                if ok == 0 {
+                    bail!("WaitNamedPipeW timed out after {timeout_ms}ms");
+                }
+            }
+        }
+    }
+
+    unreachable!()
 }
 
 /// Close a Windows HANDLE.
