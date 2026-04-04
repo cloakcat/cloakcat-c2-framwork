@@ -2,6 +2,7 @@
 
 mod build;
 mod commands;
+mod display;
 mod http;
 mod output;
 mod types;
@@ -20,10 +21,23 @@ use crate::output::print_banner;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() -> Result<()> {
+    dotenvy::dotenv().ok();
     let base =
         std::env::var("C2_BASE").unwrap_or_else(|_| "http://127.0.0.1:3000".to_string());
+    let operator_token = std::env::var("OPERATOR_TOKEN")
+        .expect("OPERATOR_TOKEN must be set (env or .env)");
+
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "X-Operator-Token",
+        reqwest::header::HeaderValue::from_str(&operator_token)
+            .expect("invalid OPERATOR_TOKEN value"),
+    );
+
     let cli = Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        .default_headers(headers)
+        .danger_accept_invalid_certs(true)
         .build()?;
 
     let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -56,7 +70,7 @@ fn main() -> Result<()> {
                 }
                 let _ = rl.add_history_entry(line);
 
-                match dispatch(&cli, &base, line, cancel.clone()) {
+                match dispatch(&cli, &base, &operator_token, line, cancel.clone()) {
                     Ok(Flow::Continue) => {}
                     Ok(Flow::Quit) => break,
                     Err(e) => eprintln!("error: {e:#}"),

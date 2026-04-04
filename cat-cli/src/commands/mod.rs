@@ -31,6 +31,7 @@ pub struct CliCtx<'a> {
     pub cli: &'a Client,
     pub base: &'a str,
     pub cancel: Arc<AtomicBool>,
+    pub operator_token: &'a str,
 }
 
 #[derive(Parser)]
@@ -260,6 +261,27 @@ enum Cmd {
     /// List active reverse SOCKS5 listeners
     SocksList,
 
+    /// Forward a local port through an agent to a fixed remote target
+    PortfwdStart {
+        /// Agent ID or alias
+        agent: String,
+        /// Local port to bind on the C2 server
+        local_port: u16,
+        /// Remote target in host:port format (e.g. 192.168.1.10:3389)
+        remote_target: String,
+    },
+
+    /// Stop a port-forward
+    PortfwdStop {
+        /// Agent ID or alias
+        agent: String,
+        /// Local port that was forwarded
+        local_port: u16,
+    },
+
+    /// List active port-forwards
+    PortfwdList,
+
     /// Execute .NET assembly in-memory on an agent
     #[command(trailing_var_arg = true)]
     ExecuteAssembly {
@@ -386,6 +408,7 @@ enum Cmd {
 pub fn dispatch(
     cli: &Client,
     base: &str,
+    operator_token: &str,
     line: &str,
     cancel: Arc<AtomicBool>,
 ) -> Result<Flow> {
@@ -404,7 +427,7 @@ pub fn dispatch(
         }
     };
 
-    let ctx = CliCtx { cli, base, cancel };
+    let ctx = CliCtx { cli, base, cancel, operator_token };
 
     match parsed.cmd {
         // --- agent ---
@@ -502,6 +525,15 @@ pub fn dispatch(
         Cmd::SocksStart { agent, port } => socks::cmd_socks_start(&ctx, &agent, port)?,
         Cmd::SocksStop { agent } => socks::cmd_socks_stop(&ctx, &agent)?,
         Cmd::SocksList => socks::cmd_socks_list(&ctx)?,
+
+        // --- portfwd ---
+        Cmd::PortfwdStart { agent, local_port, remote_target } => {
+            socks::cmd_portfwd_start(&ctx, &agent, local_port, &remote_target)?
+        }
+        Cmd::PortfwdStop { agent, local_port } => {
+            socks::cmd_portfwd_stop(&ctx, &agent, local_port)?
+        }
+        Cmd::PortfwdList => socks::cmd_portfwd_list(&ctx)?,
 
         // --- listener management ---
         Cmd::ListenersList => listener::cmd_listeners_list(&ctx)?,

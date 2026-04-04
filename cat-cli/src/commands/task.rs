@@ -8,12 +8,14 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 
+use crate::display;
 use crate::http::resolve_agent_identifier;
-use crate::output::{print_audit, print_history, print_json};
+use crate::output::{print_audit, print_history};
+use crate::types::ResultItem;
 
 use super::CliCtx;
 
-pub fn cmd_results(ctx: &CliCtx, agent: &str, limit: usize) -> Result<()> {
+pub fn cmd_results(ctx: &CliCtx, agent: &str, limit: usize, full: bool) -> Result<()> {
     let agent_id = resolve_agent_identifier(ctx.cli, ctx.base, agent)?;
     let res = ctx
         .cli
@@ -22,7 +24,13 @@ pub fn cmd_results(ctx: &CliCtx, agent: &str, limit: usize) -> Result<()> {
             ctx.base, agent_id, limit
         ))
         .send()?;
-    print_json(res.text()?);
+    let status = res.status();
+    let text = res.text()?;
+    if !status.is_success() {
+        return Err(anyhow!("results fetch failed: status={} body={}", status, text));
+    }
+    let items: Vec<ResultItem> = serde_json::from_str(&text)?;
+    display::print_results(&items, full);
     Ok(())
 }
 
@@ -97,7 +105,7 @@ fn follow_results(
     interval_s: u64,
     cancel: Arc<AtomicBool>,
 ) -> Result<()> {
-    println!("following results for agent={agent} (Ctrl+C to stop)...");
+    display::print_tail_header(agent);
     let mut seen: HashSet<String> = HashSet::new();
 
     while !cancel.load(Ordering::SeqCst) {
@@ -123,7 +131,7 @@ fn follow_results(
             seen.insert(cmd_id.clone());
             let exit = item.get("exit_code").and_then(|x| x.as_i64()).unwrap_or(0);
             let stdout = item.get("stdout").and_then(|x| x.as_str()).unwrap_or("");
-            println!("\n[{}] exit={} stdout={}", cmd_id, exit, stdout);
+            display::print_tail_item(&cmd_id, exit, stdout);
         }
         for _ in 0..interval_s {
             if cancel.load(Ordering::SeqCst) {
@@ -132,6 +140,6 @@ fn follow_results(
             thread::sleep(Duration::from_secs(1));
         }
     }
-    println!("(stopped)");
+    display::print_stopped();
     Ok(())
 }

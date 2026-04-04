@@ -43,8 +43,20 @@ pub fn cmd_build_agent(
         };
 
         let stage_url = format!("{}/v1/admin/stage?one_shot=true&expire=60", ctx.base);
-        let resp = ctx
-            .cli
+        let size_mb = data.len() as f64 / 1_048_576.0;
+        println!("[*] Uploading {:.2} MB to stage server...", size_mb);
+        let mut upload_headers = reqwest::header::HeaderMap::new();
+        upload_headers.insert(
+            "X-Operator-Token",
+            reqwest::header::HeaderValue::from_str(ctx.operator_token)
+                .map_err(|e| anyhow::anyhow!("invalid operator token: {e}"))?,
+        );
+        let upload_cli = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .default_headers(upload_headers)
+            .danger_accept_invalid_certs(true)
+            .build()?;
+        let resp = upload_cli
             .post(&stage_url)
             .header("content-type", "application/octet-stream")
             .body(data)
