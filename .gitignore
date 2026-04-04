@@ -21,3 +21,25 @@ target
 #.idea/
 
 CLAUDE.md
+USAGE.md
+USAGE.md.bak
+
+# Secrets & local config
+.env
+.env.*
+.claude/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# PostgreSQL data
+infra/pgdata/
+
+# Build artifacts / dist binaries
+dist/*.exe
+dist/*.bin.enc
+dist/*.key
+dist/.agent_id
+cat-cli/dist/
+cat-cli/test.txt
