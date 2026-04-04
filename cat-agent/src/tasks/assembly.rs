@@ -1337,8 +1337,15 @@ mod win {
             abort!(format!("VirtualAllocEx(data): error {}", GetLastError()));
         }
         let mut written: usize = 0;
+        // if WriteProcessMemory(
+        //     pi.hProcess, data_remote, data.as_ptr().cast(), data.len(), &mut written,
+        // )
         if WriteProcessMemory(
-            pi.hProcess, data_remote, data.as_ptr().cast(), data.len(), &mut written,
+            pi.hProcess as *mut core::ffi::c_void,
+            data_remote,
+            data.as_ptr().cast(),
+            data.len(),
+            &mut written,
         ) == 0 {
             abort!(format!("WriteProcessMemory(data): error {}", GetLastError()));
         }
@@ -1351,8 +1358,15 @@ mod win {
         if code_remote.is_null() {
             abort!(format!("VirtualAllocEx(code): error {}", GetLastError()));
         }
+        // if WriteProcessMemory(
+        //     pi.hProcess, code_remote, code.as_ptr().cast(), code.len(), &mut written,
+        // )
         if WriteProcessMemory(
-            pi.hProcess, code_remote, code.as_ptr().cast(), code.len(), &mut written,
+            pi.hProcess as *mut core::ffi::c_void,
+            code_remote,
+            code.as_ptr().cast(),
+            code.len(),
+            &mut written,
         ) == 0 {
             abort!(format!("WriteProcessMemory(code): error {}", GetLastError()));
         }
