@@ -376,6 +376,7 @@ pub fn migrate(pid: u32, shellcode: &[u8], use_syscalls: bool) -> anyhow::Result
     unsafe {
         windows_sys::Win32::System::Threading::ExitProcess(0);
     }
+    unreachable!()
 }
 
 #[cfg(not(target_os = "windows"))]
