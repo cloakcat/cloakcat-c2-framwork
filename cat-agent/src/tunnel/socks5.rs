@@ -136,7 +136,10 @@ async fn relay(
                     // 204: no data yet, back off slightly to avoid poll flood
                     sleep(Duration::from_millis(100)).await;
                 }
-                Err(_) => {
+                Err(e) => {
+                    if e.to_string().contains("session_not_found") {
+                        return; // 서버에 세션 없음 — 즉시 종료
+                    }
                     sleep(Duration::from_millis(500)).await;
                 }
             }
@@ -172,6 +175,7 @@ async fn post_frame(
 }
 
 /// Poll for one server → agent frame. Returns `None` on 204 (no data).
+/// Returns an error with a special sentinel on 404 (session gone).
 async fn poll_frame(
     client: &reqwest::Client,
     url: &str,
@@ -184,6 +188,9 @@ async fn poll_frame(
         .await?;
     if resp.status() == reqwest::StatusCode::NO_CONTENT {
         return Ok(None);
+    }
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        anyhow::bail!("session_not_found");
     }
     if !resp.status().is_success() {
         anyhow::bail!("tunnel recv: {}", resp.status());
